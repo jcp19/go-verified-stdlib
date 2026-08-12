@@ -1,0 +1,22 @@
+name: Gobra
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Gobra runs in config file mode: all of its options come from
+      # src/gobra-mod.json (module-wide) and src/sort/gobra.json (package).
+      - name: Verify package sort
+        uses: viperproject/gobra-action@main
+        with:
+          configFile: 'src/sort'
+          timeout: 1h

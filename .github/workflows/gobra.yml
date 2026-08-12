@@ -14,9 +14,15 @@ jobs:
         uses: actions/checkout@v5
 
       # Gobra runs in config file mode: all of its options come from
-      # src/gobra-mod.json (module-wide) and src/sort/gobra.json (package).
+      # src/gobra-mod.json (module-wide) and src/<pkg>/gobra.json (package).
       - name: Verify package sort
         uses: viperproject/gobra-action@main
         with:
           configFile: 'src/sort'
+          timeout: 1h
+
+      - name: Verify package bytes
+        uses: viperproject/gobra-action@main
+        with:
+          configFile: 'src/bytes'
           timeout: 1h

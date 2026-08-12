@@ -1,0 +1,12 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// This file contains the Gobra specifications of package sort. Gobra only
+// considers the files of this package that carry the "+gobra" header below,
+// so the .go files of the package are ignored until they are annotated and
+// opted in one by one.
+
+// +gobra
+
+package sort

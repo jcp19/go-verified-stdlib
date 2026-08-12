@@ -1,0 +1,27 @@
+# Verifies the packages of this repository that have been opted into Gobra.
+#
+# Every verified package has a `gobra.json` next to its sources; the settings
+# shared by all of them live in `src/gobra-mod.json`. Both files are read by
+# Gobra itself, so a package is added to this workflow by adding one step that
+# points `configFile` at its directory.
+
+name: gobra
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Verify with Gobra
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+
+      - name: Verify src/sort
+        uses: viperproject/gobra-action@main
+        with:
+          configFile: 'src/sort'
+          timeout: 1h

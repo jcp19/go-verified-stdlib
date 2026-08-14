@@ -1,0 +1,276 @@
+---
+name: gobra-improve-perf
+description: Speed up slow Gobra verification and validate that each fix actually helped, reverting the ones that don't. Use whenever Gobra verification is too slow, times out, or diverges and someone wants it fixed or asks how to make it faster — including requests about outline statements, opaque functions, predicates, the chopper/slicing, moreJoins, exhaleMode, quantified permissions, or triggers. If available, pair this skill with `gobra-debug-perf`, which locates the bottleneck first.
+---
+
+# Improving Gobra verification performance
+
+Gobra verifies Go via Viper/Silicon and Z3. Verification time is roughly the
+**number of symbolic execution paths** times the **cost of each SMT query**,
+and query cost is dominated by the **proof context** (every axiom, function
+body, path condition, and heap chunk shipped to Z3 alongside the real goal),
+and by the theories in which the generated assertions fall (assertions about
+non-linear integer arithmetic are extremely slow). When talking about the context,
+quantified assertions are very costly as they relly on e-matching and triggering
+to be instantiated, and it may often lead to matching loops (read about it here:
+https://viper.ethz.ch/tutorial/quantifiers.html).
+
+When a part of the program is too slow, there are a few things to try out:
+cut paths, or cut context.
+
+Two facts should shape how you work here, both learned the hard way on a large
+Gobra project:
+
+- **No configuration is universally best.** The same flag that gives a 3.5×
+  speed-up on one function makes another 10× slower or introduces spurious
+  errors. Optimization is per-member and empirical.
+- **Unmeasured changes usually cost more than they save**, in verification time
+  *and* in annotation burden that someone has to maintain forever.
+
+Hence the protocol below is not ceremony; it's the part that makes the rest work.
+
+## The protocol: one change, measured, kept or reverted
+
+1. **Get a baseline.** Use the isolated-member command from `gobra-debug-perf`
+   (`gobra -i pkg/file.go@412 --gobraDirectory ./gobra-out`), run it twice, and
+   record the time. Without an isolated reproduce loop you will be waiting
+   45 minutes per experiment and will stop measuring.
+2. **Apply exactly one change.**
+3. **Re-measure the same way**, twice. Differences under ~10% are noise.
+4. **Keep it only if it wins.** Otherwise `git checkout` the change and say so.
+   A change that adds annotations for a 3% gain is a loss.
+5. **Re-verify the whole package before you finish.** Per-member speed-ups can
+   slow down or break other members, and some options change *completeness* —
+   a member can start reporting a spurious error.
+
+Record what you tried and what it did, including the failures. "Making `Bytes`
+transparent times out after 6h" is as valuable to the next person as any win.
+
+## Pick a strategy from the diagnosis
+
+If `gobra-debug-perf` classified the bottleneck, start here rather than reading
+the whole catalogue:
+
+| Diagnosis | Try, in order |
+|---|---|
+| Path explosion | `moreJoins(impure)` (§4) → `outline` the branchy region (§3) → split branchy predicates (§2) |
+| Quantified-permission cost | Wrap footprints in predicates (§2) → `outline` the unfold/fold region (§3) → `exhaleMode(0)` if the member has no disjunctive aliasing (§4) |
+| Context size / everything slow | `--chop N` (§1) → `opaque` on big pure functions (§2) |
+| Inherited cost from a dependency | Fix the predicate or function itself (§2) — optimizing the caller won't help |
+| Quantifier blow-up or matching loop | Triggers (§5) first; nothing else matters until the loop is gone |
+
+## Strategy catalogue
+
+Ordered by how much they typically buy relative to what they cost you. Start at
+the top; stop when the member is fast enough.
+
+### 1. Automatic slicing (free, no annotations)
+
+`--chop N` splits the package into at most `N` Viper programs, each carrying
+only the context its members can depend on, and verifies them separately. On a
+large project this alone gave ~11% off the total: the number of SMT queries
+goes *up* (context is duplicated across slices) while total SMT time goes
+*down*, and long queries (>1s) nearly halve.
+
+Try this first because it costs nothing and touches no source. It also composes
+with everything below — and it gets more effective the more information hiding
+you do (next section), since hidden bodies are pruned from slices.
+
+### 2. Hide information (the biggest lever)
+
+The proof context is the root cause of most slowness, and these are the tools
+that shrink it.
+
+**Abstract predicates instead of quantified permissions.** Quantified
+permissions are the most expensive proof obligations in practice: computing the
+permission held for a location covered by several quantified chunks makes Z3
+case-split, in the worst case exponentially in the number of chunks that may
+provide permission. Wrapping them in a predicate keeps them out of the context
+until you unfold:
+
+```go
+// instead of threading `forall i int :: 0 <= i && i < len(s) ==> acc(&s[i])`
+// (i.e. acc(s)) through every contract that touches the slice:
+pred Bytes(s []byte) {
+    forall i int :: 0 <= i && i < len(s) ==> acc(&s[i])
+}
+```
+
+This is the highest-value single change on byte-slice-heavy code — inlining such
+a predicate and dropping its `fold`/`unfold`s pushed a 45-minute verification
+past a 6-hour timeout. It matters most when several slices are live at once,
+because Silicon must then consider that they may overlap.
+
+**`opaque` functions with explicit `reveal`.** Every non-opaque pure function
+contributes a universally quantified axiom equating calls to its body. Mark
+functions whose body is large or needed only in a few places as `opaque`, and
+reveal them where the definition is genuinely required:
+
+```go
+ghost
+decreases i
+opaque
+pure func fac(i int) int { return i <= 1 ? 1 : i * fac(i-1) }
+
+// at the (few) places that need the definition:
+tmp := reveal fac(3)
+```
+
+Used at scale this is decisive: on VerifiedSCION, removing all `opaque`/`reveal`
+annotations pushed verification past a 6-hour timeout.
+
+**Split branchy predicates.** A predicate whose body contains N impure
+implications (`d.f != nil ==> acc(P(d.f))`) forks 2^N paths at *every* unfold
+site — a predicate that itself verifies in 3 seconds can dominate the package
+this way. Moving each implication into its own predicate, unfolded on demand,
+removes that branching. Weigh it honestly: it is a large annotation change to a
+central data structure, and it may not be worth it if the backend options in §4
+already cut the paths.
+
+### 3. `outline` statements (split a function without touching the code)
+
+An `outline` statement verifies a block of statements against its own contract
+and treats it as opaque where it occurs — the frame rule applied at statement
+level. It has the effect of extracting a helper function, but shares the
+enclosing scope, so no arguments or return tuples to thread:
+
+```go
+requires Bytes(s)
+ensures  Bytes(s)
+ensures  /* functional spec of the block */
+outline (
+    unfold Bytes(s)
+    // statements that read and modify the slice
+    fold Bytes(s)
+)
+```
+
+This is the right tool when you cannot refactor the Go code (verifying existing
+code as-is), and it does four things: the precondition prunes context for the
+block; facts established inside — especially quantified ones — do not leak into
+the rest of the function; branching inside the block is hidden from the
+enclosing member; and each outline can be verified independently.
+
+Realistic expectations: measured speed-ups ranged from ~1.4× down to slight
+slowdowns. The consistent win is elsewhere — **`outline` localizes errors and
+tames divergence.** A member that spins forever with no output often terminates
+with a precise error once the suspect region is outlined. Many outlines are
+worth introducing while proving a member and deleting once it verifies.
+
+Restrictions: no `return` inside an outline, and no `break`/`continue` targeting
+a loop outside it. Use `before(x)` (not `old(x)`) to refer to the pre-state of
+the block.
+
+### 4. Backend algorithm options (cheap to try, per-member)
+
+These change how Silicon generates proof obligations. Set them **per member**
+with `#backend[...]`, placed with the member's specification — that keeps the
+knowledge attached to the code that needs it instead of in someone's shell
+history:
+
+```go
+requires acc(x) && acc(y)
+ensures  acc(z)
+#backend[moreJoins(impure), exhaleMode(1)]
+func f(x, y, z *int) { ... }
+```
+
+`#backend` also works on `outline` statements and closures. The same options
+exist globally on the CLI: `--moreJoins off|impure|all`, `--mceMode off|od|on`
+(`on` = `exhaleMode(1)`, `od` = `exhaleMode(2)`), and
+`--conditionalizePermissions`. Prefer per-member annotations for exceptions and
+CLI flags only for the project-wide default.
+
+| Option | What it does | When it helps |
+|---|---|---|
+| `moreJoins(impure)` | Joins paths right after impure implications/conditionals | The first thing to try on branchy members. Cut one function from 118 terminal paths / 71s to 16 paths / 20s |
+| `moreJoins(all)` | Also joins after `if` statements | Only for extreme path counts. Frequently *much* worse (one function: 20s → 194s) and can introduce spurious errors |
+| `moreJoins(off)` | Gobra's default — no extra joining | Restore when joining hurts |
+| `exhaleMode(0)` (greedy) | Cheaper heap obligations, incomplete under disjunctive aliasing | Members with no disjunctive aliasing. Only switch a member to greedy *after* it verifies, or you cannot tell incompleteness from a real error |
+| `exhaleMode(1)` (mce) | Complete but more expensive heap reasoning | Gobra's default (`--mceMode on`). Required when a reference may alias one of several others |
+| `exhaleMode(2)` (on demand) | Greedy first, consolidate and retry on failure | Sounds ideal, measured badly: heap queries nearly tripled and total time went from ~2650s to ~3800s with runs timing out. Don't reach for it by default |
+| `--conditionalizePermissions` | Rewrites `b ==> acc(e, p)` to `acc(e, b ? p : none)`, joining without merging states | Mixed results per member, but often good globally. Blocked when the resource mentions a heap location (e.g. `P(x.f)`) |
+| `stateConsolidationMode(...)` | Tunes when Silicon merges heap chunks | Last resort, measure carefully |
+
+Because these interact, a small grid over `{moreJoins} × {conditionalizePermissions}`
+on the isolated member is a reasonable use of time when one member dominates.
+Global default that worked well in practice: joins on impure expressions plus
+permission conditionalization, with per-member overrides for the stragglers.
+
+Two cautions. `moreJoins` is currently not applied when verifying predicates and
+pure functions, so a member dominated by those will not respond to it. And
+`--parallelizeBranches` genuinely speeds things up but causes SMT variable
+renamings across runs, which surfaces instability and spurious errors — treat
+its speed-up as unavailable unless stability is measurably fine.
+
+### 5. Quantifier and trigger hygiene
+
+Most of what makes SMT-based verification unpredictable is quantifier
+instantiation. This is standard across verifiers, and the advice transfers:
+
+- **Always give explicit triggers** on quantified assertions, and choose the
+  most restrictive ones that still fire. `--requireTriggers` enforces this
+  project-wide and is worth turning on.
+- **Watch for matching loops**: a trigger whose instantiation produces a new
+  term matching the same trigger diverges. If profiling shows a *user-provided*
+  matching loop, fix it — that is a real bug, not a tuning issue. Loops
+  originating in Z3's datatype theory or Silicon's collection axiomatizations
+  cannot be fixed from your source; recognize and move on.
+- **Keep quantifiers out of ambient context**: put them inside predicates or
+  opaque function bodies and expose them only where needed. This is the same
+  idea as §2, applied to logic rather than to permissions.
+- **Prefer many small proofs over one big one.** In Gobra, use ghost lemma
+  functions (with `requires`/`ensures`) or an `outline` block to keep an
+  intermediate proof's facts from leaking into the rest of the member. Note
+  `assert P by { ... }` (the proof form) is currently rejected by Gobra's type
+  checker; `assert P by contra { ... }` and `asserting e1 in e2` do work.
+- **Avoid non-linear arithmetic** where you can; prove it in small steps in
+  dedicated lemmas. `--disableNL` keeps it out of everything else.
+
+### 6. Borrowed wisdom from Dafny and Verus
+
+These verifiers hit the same wall and document the same cures — useful both as
+corroboration and for ideas Gobra users under-use:
+
+- **Dafny**: hide function bodies with `opaque` + `reveal`; scope local proofs
+  with `assert P by { ... }`; move proof sequences into lemmas; make
+  preconditions and invariants opaque via labels; break large definitions into
+  small ones with clean contracts; `--isolate-assertions` to find the expensive
+  assertion; judge cost by Z3 **resource count** (deterministic) rather than
+  wall-clock time, and treat high variance across random seeds
+  (`dafny measure-complexity --iterations N`) as a predictor of future
+  breakage. The framing worth stealing: give the solver *exactly* the facts it
+  needs — missing facts fail, irrelevant facts are just as fatal.
+- **Verus**: `--time` / `--time-expanded` for per-function breakdowns,
+  `--profile` (on timeout) and `--profile-all` (on slow successes) to rank
+  quantifiers by instantiation count, `--rlimit 1` to keep profiling data
+  small, `--verify-function` to target one function; `assert(F) by { P }` so
+  `P`'s facts prove `F` and nothing else; `opaque`/`reveal`; conservative
+  trigger selection.
+
+The Gobra analogue of "isolate assertions" is `-i file@line` plus `outline`;
+the analogue of `--profile` is a Silicon prover log analyzed for quantifier
+instantiations. The mental model is identical.
+
+## Things that don't work (don't rediscover them)
+
+- **Selecting heap algorithms per member before the member verifies.** You
+  usually cannot predict whether a function exhibits disjunctive aliasing, so
+  you cannot tell an incompleteness from a genuine error. Switch a member to
+  `exhaleMode(0)` only after it verifies with mce.
+- **`exhaleMode(2)` (greedy with fallback) as a global default** — see the
+  table; it made things substantially worse and less stable.
+- **Buying speed with `trusted`, `assume`, or deleted postconditions.** That is
+  not an optimization, it is a hole in the proof. If you ever do this
+  deliberately as a temporary measure, say so loudly in the report.
+- **Chasing a member you haven't measured.** Slow *predicates* and small pure
+  functions are frequently the real culprits behind a slow method, because their
+  cost is paid at every unfold or call site.
+
+## Reporting
+
+Close with a short table: member, baseline time, change applied, new time,
+kept/reverted. Then state the whole-package time before and after, confirm the
+package still verifies with zero errors, and list any member that now depends on
+a completeness-affecting option (`exhaleMode(0)`, `moreJoins(all)`) so it is
+obvious where to look if a spurious error appears later.

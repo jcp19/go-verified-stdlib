@@ -83,6 +83,8 @@ are the lists, i.e., it did not abstract over the elements stored in the list, w
 
 **YOU ARE NOT ALLOWED TO CHANGE THE IMPLEMENTATION CODE, EVER**, except in a few controlled ways: you are allowed to store intermediate results in new variables; you are allowed to name return parameters; you are allowed to rewrite range loops into for loops. **FURTHERMORE, YOU SHOULD NEVER INTRODUCE ASSUMPTIONS, IF POSSIBLE**. If you do, document them and list them in a report.
 
+**EXTREMELY IMPORTANT**: You may find bugs: while specifying and proving programs, you may find that an implementation cannot be proved against the expected specification. When this happens, question yourself: is this intended behaviour (in which case you need to extend the spec), or is this unexpected? It may be a bug. If you think that is the case, make it very clear!!!
+
 An important point about memory safety proofs is that, in Go, often there is a lot of sharing. For example, a data-structure may have a slice stored as a field that is a subslice of another. Consider the example where you parse a packet:
 ```go
 type Packet struct {

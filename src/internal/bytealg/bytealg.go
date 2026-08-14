@@ -196,13 +196,13 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 		h += uint32(s[i])
 		h -= pow * uint32(s[i-n])
 		i++
+		//@ assert forall j int :: {MatchesAt(seq(s), seq(sep), j)} 0 <= j && j < i-n ==> !MatchesAt(seq(s), seq(sep), j)
 		//@ assert forall k int :: {&s[i-n:i][k]} 0 <= k && k < n ==> &s[i-n:i][k] == &s[i-n+k]
 		//@ assert forall k int :: {seq(s[i-n:i])[k]} 0 <= k && k < n ==> seq(s[i-n:i])[k] == seq(s)[i-n:i][k]
 		//@ assert seq(s[i-n:i]) == seq(s)[i-n:i]
 		if h == hashsep && Equal(s[i-n:i], sep) {
 			//@ assert seq(s)[i-n:i] == seq(sep)
 			//@ assert MatchesAt(seq(s), seq(sep), i-n)
-			//@ assert forall j int :: {MatchesAt(seq(s), seq(sep), j)} 0 <= j && j < i-n ==> !MatchesAt(seq(s), seq(sep), j)
 			return i - n
 		}
 		//@ assert seq(s)[i-1-n] == s[i-1-n] && seq(s)[i-1] == s[i-1]

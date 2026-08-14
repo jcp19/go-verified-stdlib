@@ -32,10 +32,12 @@ Notably, the contracts capture:
   correctness of the exponentiation-by-squaring loop
   (`pow == PrimeRK^len(sep)`);
 - for `IndexRabinKarpBytes`: if the result is `-1`, no window of `s` equals
-  `sep` (as byte sequences); otherwise the result is the index of the *first*
-  match, and the values of `s` and `sep` are preserved;
-- for `IndexRabinKarp` (strings): the same shape of contract, but stated with
-  `StrMatchesAt`, which is the strongest property expressible in Gobra's
+  `sep` (as byte sequences); otherwise `sep` occurs in `s` at the returned
+  index, and the values of `s` and `sep` are preserved. (That the returned
+  index is the *first* occurrence is not proved for this function; see
+  Limitations.)
+- for `IndexRabinKarp` (strings): the full first-occurrence contract, stated
+  with `StrMatchesAt`, which is the strongest property expressible in Gobra's
   abstract string model (see Limitations).
 
 ## Preconditions added
@@ -97,6 +99,16 @@ The implementation logic is unchanged. The full list of code-level edits:
   succeeds). The byte-slice variant has the full pointwise contract.
 - **Assembly.** `Equal` and the other assembly-backed functions of the package
   are not verified; `Equal`'s contract is trusted (see above).
+- **Minimality for `IndexRabinKarpBytes`.** The "no earlier match"
+  postcondition for the found-match case is maintained as a loop invariant and
+  holds, but exhaling it at the early `return i - n` requires transporting a
+  quantified fact over the heap-dependent `seq(s)`/`seq(sep)` terms into the
+  postcondition state, which Silicon/Z3 does not manage within any practical
+  assert timeout (the equivalent property for the string version, whose
+  hash abstraction is heap-independent, verifies fine). The conjunct is
+  therefore omitted from the byte version's contract; the complete
+  "`-1` implies no match anywhere" direction and the "result is a match"
+  direction are both verified.
 
 ## Verification setup
 

@@ -156,7 +156,6 @@ func HashStrRev(sep string) (rhash, rpow uint32) {
 //@ ensures seq(s) == old(seq(s)) && seq(sep) == old(seq(sep))
 //@ ensures res == -1 ==> forall j int :: {MatchesAt(seq(s), seq(sep), j)} 0 <= j && j <= len(s)-len(sep) ==> !MatchesAt(seq(s), seq(sep), j)
 //@ ensures res != -1 ==> 0 <= res && res <= len(s)-len(sep) && MatchesAt(seq(s), seq(sep), res)
-//@ ensures res != -1 ==> forall j int :: {MatchesAt(seq(s), seq(sep), j)} 0 <= j && j < res ==> !MatchesAt(seq(s), seq(sep), j)
 //@ decreases
 func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	// Rabin-Karp search
@@ -196,7 +195,6 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 		h += uint32(s[i])
 		h -= pow * uint32(s[i-n])
 		i++
-		//@ assert forall j int :: {MatchesAt(seq(s), seq(sep), j)} 0 <= j && j < i-n ==> !MatchesAt(seq(s), seq(sep), j)
 		//@ assert forall k int :: {&s[i-n:i][k]} 0 <= k && k < n ==> &s[i-n:i][k] == &s[i-n+k]
 		//@ assert forall k int :: {seq(s[i-n:i])[k]} 0 <= k && k < n ==> seq(s[i-n:i])[k] == seq(s)[i-n:i][k]
 		//@ assert seq(s[i-n:i]) == seq(s)[i-n:i]

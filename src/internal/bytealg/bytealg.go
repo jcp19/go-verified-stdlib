@@ -185,8 +185,8 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	//@ ghost if h != hashsep { lemmaMatchesAtFalseHash(seq(s), seq(sep), 0) } else { lemmaMatchesAtFalseNeq(seq(s), seq(sep), 0) }
 	//@ assert len(seq(s)) == len(s) && len(seq(sep)) == len(sep)
 	//@ assert !MatchesAt(seq(s), seq(sep), 0)
-	//@ assert NoMatchBefore(seq(s), seq(sep), 0)
-	//@ assert NoMatchBefore(seq(s), seq(sep), 1)
+	//@ assert reveal NoMatchBefore(seq(s), seq(sep), 0)
+	//@ assert reveal NoMatchBefore(seq(s), seq(sep), 1)
 	//@ invariant 0 < n
 	//@ invariant n <= i && i <= len(s)
 	//@ invariant acc(s, p) && acc(sep, p)
@@ -212,7 +212,7 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 		//@ assert seq(s)[i-1-n] == s[i-1-n] && seq(s)[i-1] == s[i-1]
 		//@ lemmaRKHashRangeRoll(seq(s), n, i-1)
 		//@ ghost if h != hashsep { lemmaMatchesAtFalseHash(seq(s), seq(sep), i-n) } else { lemmaMatchesAtFalseNeq(seq(s), seq(sep), i-n) }
-		//@ assert NoMatchBefore(seq(s), seq(sep), i-n+1)
+		//@ assert reveal NoMatchBefore(seq(s), seq(sep), i-n+1)
 	}
 	//@ assert NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
 	return -1

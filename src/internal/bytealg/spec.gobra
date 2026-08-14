@@ -143,6 +143,7 @@ pure func StrMatchesAt(s, substr string, j int) bool {
 ghost
 requires 0 <= hi && hi-1+len(pat) <= len(q)
 decreases hi
+opaque
 pure func NoMatchBefore(q, pat seq[byte], hi int) bool {
 	return hi == 0 ? true : (!MatchesAt(q, pat, hi-1) && NoMatchBefore(q, pat, hi-1))
 }
@@ -156,6 +157,7 @@ ensures forall j int :: {MatchesAt(q, pat, j)} 0 <= j && j < hi ==> !MatchesAt(q
 decreases hi
 func LemmaNoMatchBeforePointwise(q, pat seq[byte], hi int) {
 	if hi > 0 {
+		assert reveal NoMatchBefore(q, pat, hi)
 		LemmaNoMatchBeforePointwise(q, pat, hi-1)
 	}
 }

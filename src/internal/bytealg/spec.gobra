@@ -148,6 +148,15 @@ pure func NoMatchBefore(q, pat seq[byte], hi int) bool {
 	return hi == 0 ? true : (!MatchesAt(q, pat, hi-1) && NoMatchBefore(q, pat, hi-1))
 }
 
+// lemmaNoMatchBeforeZero: the empty prefix trivially contains no match.
+ghost
+requires len(pat) <= len(q)+1
+ensures NoMatchBefore(q, pat, 0)
+decreases
+func lemmaNoMatchBeforeZero(q, pat seq[byte]) {
+	assert reveal NoMatchBefore(q, pat, 0)
+}
+
 // LemmaNoMatchBeforePointwise lets clients turn NoMatchBefore into the
 // pointwise form.
 ghost

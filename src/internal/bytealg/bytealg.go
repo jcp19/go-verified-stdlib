@@ -180,6 +180,7 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	if h == hashsep && Equal(s[:n], sep) {
 		//@ assert seq(s)[0:n] == seq(sep)
 		//@ assert MatchesAt(seq(s), seq(sep), 0)
+		//@ assert reveal NoMatchBefore(old(seq(s)), old(seq(sep)), 0)
 		return 0
 	}
 	//@ ghost if h != hashsep { lemmaMatchesAtFalseHash(seq(s), seq(sep), 0) } else { lemmaMatchesAtFalseNeq(seq(s), seq(sep), 0) }

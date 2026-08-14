@@ -63,11 +63,9 @@ An honest inventory of everything assumed rather than proved
    bitwise operators as uninterpreted functions without axioms, so they are
    unprovable inside the tool. They are needed for the
    exponentiation-by-squaring loops.
-3. **Stub files.** `src/internal/cpu/spec.gobra` and `src/unsafe/spec.gobra`
-   are declaration-only headers for unverified packages (used by `offsets.go`,
-   which itself is outside the verified scope).
-
-No `assume` statements are used anywhere.
+No `assume` statements are used anywhere. (No stub files for `unsafe` or
+`internal/cpu` are needed: `offsets.go`, the only user of those packages, is
+outside the verified scope.)
 
 ## Code changes (all semantics-preserving)
 

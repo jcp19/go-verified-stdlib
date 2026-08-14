@@ -154,23 +154,25 @@ func HashStrRev(sep string) (rhash, rpow uint32) {
 //@ requires len(sep) <= len(s)
 //@ preserves acc(s, p) && acc(sep, p)
 //@ ensures seq(s) == old(seq(s)) && seq(sep) == old(seq(sep))
-//@ ensures res == -1 ==> NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
+//@ ensures res == -1 ==> NoMatchBefore(old(seq(s)), old(seq(sep)), len(s)-len(sep)+1)
 //@ ensures res != -1 ==> 0 <= res && res <= len(s)-len(sep) && MatchesAt(seq(s), seq(sep), res)
 //@ ensures res != -1 ==> NoMatchBefore(old(seq(s)), old(seq(sep)), res)
 //@ decreases
 func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	// Rabin-Karp search
 	hashsep, pow := HashStrBytes(sep /*@ , p/2 @*/)
+	//@ assert seq(sep) == old(seq(sep)) && seq(s) == old(seq(s))
+	//@ assert hashsep == RKHash(old(seq(sep)))
 	n := len(sep)
 	var h uint32
 	//@ invariant 0 <= i && i <= n
 	//@ invariant acc(s, p) && acc(sep, p)
 	//@ invariant seq(s) == old(seq(s)) && seq(sep) == old(seq(sep))
-	//@ invariant hashsep == RKHash(seq(sep)) && pow == PowRK(PrimeRK, n)
-	//@ invariant h == RKHashRange(seq(s), 0, i)
+	//@ invariant hashsep == RKHash(old(seq(sep))) && pow == PowRK(PrimeRK, n)
+	//@ invariant h == RKHashRange(old(seq(s)), 0, i)
 	//@ decreases n - i
 	for i := 0; i < n; i++ {
-		//@ assert seq(s)[i] == s[i]
+		//@ assert seq(s) == old(seq(s)) && old(seq(s))[i] == s[i]
 		h = h*PrimeRK + uint32(s[i])
 	}
 	//@ assert forall k int :: {&s[:n][k]} 0 <= k && k < n ==> &s[:n][k] == &s[k]
@@ -183,18 +185,19 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 		//@ lemmaNoMatchBeforeZero(old(seq(s)), old(seq(sep)))
 		return 0
 	}
-	//@ ghost if h != hashsep { lemmaMatchesAtFalseHash(seq(s), seq(sep), 0) } else { lemmaMatchesAtFalseNeq(seq(s), seq(sep), 0) }
-	//@ assert len(seq(s)) == len(s) && len(seq(sep)) == len(sep)
-	//@ assert !MatchesAt(seq(s), seq(sep), 0)
-	//@ assert reveal NoMatchBefore(seq(s), seq(sep), 0)
-	//@ assert reveal NoMatchBefore(seq(s), seq(sep), 1)
+	//@ assert len(old(seq(s))) == len(s) && len(old(seq(sep))) == len(sep)
+	//@ ghost if h == hashsep { assert (old(seq(s))[0:n] == old(seq(sep))) == (seq(s)[0:n] == seq(sep)) }
+	//@ ghost if h != hashsep { lemmaMatchesAtFalseHash(old(seq(s)), old(seq(sep)), 0) } else { lemmaMatchesAtFalseNeq(old(seq(s)), old(seq(sep)), 0) }
+	//@ assert !MatchesAt(old(seq(s)), old(seq(sep)), 0)
+	//@ assert reveal NoMatchBefore(old(seq(s)), old(seq(sep)), 0)
+	//@ assert reveal NoMatchBefore(old(seq(s)), old(seq(sep)), 1)
 	//@ invariant 0 < n
 	//@ invariant n <= i && i <= len(s)
 	//@ invariant acc(s, p) && acc(sep, p)
 	//@ invariant seq(s) == old(seq(s)) && seq(sep) == old(seq(sep))
-	//@ invariant hashsep == RKHash(seq(sep)) && pow == PowRK(PrimeRK, n)
-	//@ invariant h == RKHashRange(seq(s), i-n, i)
-	//@ invariant NoMatchBefore(seq(s), seq(sep), i-n+1)
+	//@ invariant hashsep == RKHash(old(seq(sep))) && pow == PowRK(PrimeRK, n)
+	//@ invariant h == RKHashRange(old(seq(s)), i-n, i)
+	//@ invariant NoMatchBefore(old(seq(s)), old(seq(sep)), i-n+1)
 	//@ decreases len(s) - i
 	for i := n; i < len(s); {
 		h *= PrimeRK
@@ -212,12 +215,14 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 			//@ assert NoMatchBefore(old(seq(s)), old(seq(sep)), i-n)
 			return i - n
 		}
-		//@ assert seq(s)[i-1-n] == s[i-1-n] && seq(s)[i-1] == s[i-1]
-		//@ lemmaRKHashRangeRoll(seq(s), n, i-1)
-		//@ ghost if h != hashsep { lemmaMatchesAtFalseHash(seq(s), seq(sep), i-n) } else { lemmaMatchesAtFalseNeq(seq(s), seq(sep), i-n) }
-		//@ assert reveal NoMatchBefore(seq(s), seq(sep), i-n+1)
+		//@ assert seq(s) == old(seq(s)) && seq(sep) == old(seq(sep))
+		//@ assert old(seq(s))[i-1-n] == s[i-1-n] && old(seq(s))[i-1] == s[i-1]
+		//@ lemmaRKHashRangeRoll(old(seq(s)), n, i-1)
+		//@ ghost if h == hashsep { assert (old(seq(s))[i-n:i] == old(seq(sep))) == (seq(s)[i-n:i] == seq(sep)) }
+		//@ ghost if h != hashsep { lemmaMatchesAtFalseHash(old(seq(s)), old(seq(sep)), i-n) } else { lemmaMatchesAtFalseNeq(old(seq(s)), old(seq(sep)), i-n) }
+		//@ assert reveal NoMatchBefore(old(seq(s)), old(seq(sep)), i-n+1)
 	}
-	//@ assert NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
+	//@ assert NoMatchBefore(old(seq(s)), old(seq(sep)), len(s)-len(sep)+1)
 	return -1
 }
 

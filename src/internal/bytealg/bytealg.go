@@ -156,7 +156,7 @@ func HashStrRev(sep string) (rhash, rpow uint32) {
 //@ ensures seq(s) == old(seq(s)) && seq(sep) == old(seq(sep))
 //@ ensures res == -1 ==> NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
 //@ ensures res != -1 ==> 0 <= res && res <= len(s)-len(sep) && MatchesAt(seq(s), seq(sep), res)
-//@ ensures res != -1 ==> NoMatchBefore(seq(s), seq(sep), res)
+//@ ensures res != -1 ==> NoMatchBefore(old(seq(s)), old(seq(sep)), res)
 //@ decreases
 func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	// Rabin-Karp search
@@ -207,6 +207,8 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 			//@ assert seq(s)[i-n:i] == seq(sep)
 			//@ assert MatchesAt(seq(s), seq(sep), i-n)
 			//@ assert NoMatchBefore(seq(s), seq(sep), i-n)
+			//@ assert seq(s) == old(seq(s)) && seq(sep) == old(seq(sep))
+			//@ assert NoMatchBefore(old(seq(s)), old(seq(sep)), i-n)
 			return i - n
 		}
 		//@ assert seq(s)[i-1-n] == s[i-1-n] && seq(s)[i-1] == s[i-1]

@@ -12,6 +12,7 @@ description: Setup Gobra in a pre-existing Git repository
 2. Check if the root of the module of the package under verification already has a `gobra` folder. If not, create it -- it will be used for storing specifications and stubs for unverified libraries you depend on, as well as verified utility packages containing ghost code. Check if the root of the module of the package under verification already has a `gobra-mod.json` file containing the project-level configuration of the project. If not, create it. The following is a good initial json config:
 ```json
 {
+  "assert_timeout" 3000,
   "includes": [".", "gobra/"],
   "module" : ???,
   "only_files_with_header": true,
@@ -20,6 +21,7 @@ description: Setup Gobra in a pre-existing Git repository
 }
 ```
 This config sets up the following behaviour:
+- `assert_timout`: guarantees that most (though not all) long SMT queries are killed within 3 seconds.
 - `includes`: locations against which imports are resolved. Analogous to the -I flag in C compilers.
 - `module` : the name of the module. Replace `???` by the actual module name and path.
 - `only_files_with_header` : verify the files that were explicitely selected to verify by adding a `// +gobra` header to them. Ignores all .go files without this annotations.

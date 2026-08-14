@@ -17,9 +17,10 @@ package bytealg
 // bytes. A nil argument is equivalent to an empty slice.
 //
 // Equal is declared in equal_native.go and implemented in per-architecture
-// assembly files (equal_*.s), which Gobra cannot verify. This contract is
-// its trusted specification.
-trusted
-requires false
+// assembly files (equal_*.s), which Gobra cannot verify. This bodyless pure
+// function is its trusted specification: two byte slices are Equal exactly
+// when they have the same (mathematical) sequence of bytes.
+requires acc(a, _) && acc(b, _)
+ensures res == (seq(a) == seq(b))
 decreases
-pure func Equal(a, b []byte) bool
+pure func Equal(a, b []byte) (res bool)

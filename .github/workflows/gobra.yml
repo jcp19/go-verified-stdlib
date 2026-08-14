@@ -25,5 +25,5 @@ jobs:
         uses: viperproject/gobra-action@main
         with:
           configFile: 'src/internal/bytealg'
-          javaXss: 2g
+          javaXss: 1500m
           timeout: 1h

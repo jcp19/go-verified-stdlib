@@ -37,12 +37,13 @@ type Element struct {
 //@ requires l != nil ==> l.Mem(es, vs, true) && 0 <= i && i < len(es) && es[i] == e
 //@ requires l == nil ==> acc(e) && e.list == nil
 //@ ensures  l != nil ==> l.Mem(es, vs, true)
-//@ ensures  l != nil && i < len(es)-1 ==> ret == es[i+1]
+//@ ensures  l != nil && i < len(es)-1 ==> ret == es[i+1] && ret != nil
 //@ ensures  l != nil && i == len(es)-1 ==> ret == nil
 //@ ensures  l == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
 //@ decreases
 func (e *Element) Next( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[any], ghost i int @*/ ) (ret *Element) {
 	//@ ghost if l != nil { unfold l.Mem(es, vs, true) }
+	//@ assert l != nil && i < len(es)-1 ==> es[i+1] != nil
 	if p := e.next; e.list != nil && p != &e.list.root {
 		//@ ghost if l != nil { fold l.Mem(es, vs, true) }
 		return p
@@ -57,12 +58,13 @@ func (e *Element) Next( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[
 //@ requires l != nil ==> l.Mem(es, vs, true) && 0 <= i && i < len(es) && es[i] == e
 //@ requires l == nil ==> acc(e) && e.list == nil
 //@ ensures  l != nil ==> l.Mem(es, vs, true)
-//@ ensures  l != nil && i > 0 ==> ret == es[i-1]
+//@ ensures  l != nil && i > 0 ==> ret == es[i-1] && ret != nil
 //@ ensures  l != nil && i == 0 ==> ret == nil
 //@ ensures  l == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
 //@ decreases
 func (e *Element) Prev( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[any], ghost i int @*/ ) (ret *Element) {
 	//@ ghost if l != nil { unfold l.Mem(es, vs, true) }
+	//@ assert l != nil && i > 0 ==> es[i-1] != nil
 	if p := e.prev; e.list != nil && p != &e.list.root {
 		//@ ghost if l != nil { fold l.Mem(es, vs, true) }
 		return p
@@ -115,7 +117,7 @@ func (l *List) Len( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini boo
 // Front returns the first element of list l or nil if the list is empty.
 //@ requires l.Mem(es, vs, ini)
 //@ ensures  l.Mem(es, vs, ini)
-//@ ensures  len(es) > 0 ==> ret == es[0]
+//@ ensures  len(es) > 0 ==> ret == es[0] && ret != nil
 //@ ensures  len(es) == 0 ==> ret == nil
 //@ decreases
 func (l *List) Front( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/ ) (ret *Element) {
@@ -132,7 +134,7 @@ func (l *List) Front( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini b
 // Back returns the last element of list l or nil if the list is empty.
 //@ requires l.Mem(es, vs, ini)
 //@ ensures  l.Mem(es, vs, ini)
-//@ ensures  len(es) > 0 ==> ret == es[len(es)-1]
+//@ ensures  len(es) > 0 ==> ret == es[len(es)-1] && ret != nil
 //@ ensures  len(es) == 0 ==> ret == nil
 //@ decreases
 func (l *List) Back( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/ ) (ret *Element) {

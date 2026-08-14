@@ -1,0 +1,31 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// This file holds lemmas about package container/list that are useful to
+// clients of the package.
+
+package list
+
+// DistinctLists proves that two lists whose memory predicates are held
+// separately are distinct. This fact is hidden inside the (folded)
+// predicates, so clients that call a method of one list with an element or
+// mark of another need this lemma to discharge the mode dispatch of the
+// contract.
+ghost
+requires a.Mem(aes, avs, aini)
+requires b.Mem(bes, bvs, bini)
+ensures  a.Mem(aes, avs, aini)
+ensures  b.Mem(bes, bvs, bini)
+ensures  a != b && a != nil && b != nil
+decreases
+func DistinctLists(a, b *List, aes seq[*Element], avs seq[any], aini, bini bool, bes seq[*Element], bvs seq[any]) {
+	unfold a.Mem(aes, avs, aini)
+	unfold b.Mem(bes, bvs, bini)
+	assert a != b
+	fold a.Mem(aes, avs, aini)
+	fold b.Mem(bes, bvs, bini)
+}

@@ -10,6 +10,29 @@
 // The module is configured with "only_files_with_header", so Gobra only looks
 // at the files of this package that carry the "// +gobra" header above. Add
 // that header to a .go file of this package to bring it under verification.
+//
+// The Rabin-Karp functions of bytealg.go are specified against the following
+// mathematical abstractions:
+//   - RKHash(q), RKHashRange(q, lo, hi)
+//       Rabin-Karp hash of a byte sequence (of the range q[lo:hi] of a byte
+//       sequence, respectively). The range form avoids sequence slicing in
+//       the recursive definition, which keeps the SMT encoding cheap.
+//   - RKHashRev(q), RKHashRevRange(q, lo, hi)
+//       Rabin-Karp hash of the reverse of a byte sequence (range).
+//   - RKHashStr(s, lo, hi), RKHashStrRev(s, lo, hi)
+//       the analogues for ranges of a string; strings cannot be converted to
+//       sequences in Gobra, so ranges of the original string are used.
+//   - PowRK(b, e)            b to the power of e.
+//   - MatchesAt(q, pat, j)   pat occurs in q at position j.
+//   - StrMatchesAt(s, substr, j)
+//       the analogue of MatchesAt for strings that is provable in Gobra's
+//       abstract string model.
+//
+// Note that Gobra does not model wrap-around of uint32 arithmetic (in its
+// default mode, Go's fixed-width integer types are treated as unbounded
+// mathematical integers). The abstractions above are therefore exact,
+// unbounded counterparts of the code's uint32 computations, and all equalities
+// below are equalities of those unbounded values.
 
 package bytealg
 
@@ -24,3 +47,249 @@ requires acc(a, _) && acc(b, _)
 ensures res == (seq(a) == seq(b))
 decreases
 pure func Equal(a, b []byte) (res bool)
+
+// RKHashRange is the Rabin-Karp hash of the byte range q[lo:hi]:
+//   q[lo]*PrimeRK^(hi-lo-1) + ... + q[hi-2]*PrimeRK + q[hi-1]
+ghost
+requires 0 <= lo && lo <= hi && hi <= len(q)
+decreases hi - lo
+pure func RKHashRange(q seq[byte], lo, hi int) uint32 {
+	return lo == hi ? uint32(0) :
+		RKHashRange(q, lo, hi-1)*PrimeRK + uint32(q[hi-1])
+}
+
+// RKHash is the Rabin-Karp hash of the byte sequence q.
+ghost
+decreases
+pure func RKHash(q seq[byte]) uint32 {
+	return RKHashRange(q, 0, len(q))
+}
+
+// RKHashRevRange is the Rabin-Karp hash of the reverse of the byte range
+// q[lo:hi].
+ghost
+requires 0 <= lo && lo <= hi && hi <= len(q)
+decreases hi - lo
+pure func RKHashRevRange(q seq[byte], lo, hi int) uint32 {
+	return lo == hi ? uint32(0) :
+		RKHashRevRange(q, lo+1, hi)*PrimeRK + uint32(q[lo])
+}
+
+// RKHashRev is the Rabin-Karp hash of the reverse of the byte sequence q.
+ghost
+decreases
+pure func RKHashRev(q seq[byte]) uint32 {
+	return RKHashRevRange(q, 0, len(q))
+}
+
+// RKHashStr is the Rabin-Karp hash of the byte range s[lo:hi] of string s.
+ghost
+requires 0 <= lo && lo <= hi && hi <= len(s)
+decreases hi - lo
+pure func RKHashStr(s string, lo, hi int) uint32 {
+	return lo == hi ? uint32(0) :
+		RKHashStr(s, lo, hi-1)*PrimeRK + uint32(s[hi-1])
+}
+
+// RKHashStrRev is the Rabin-Karp hash of the reverse of the byte range
+// s[lo:hi] of string s.
+ghost
+requires 0 <= lo && lo <= hi && hi <= len(s)
+decreases hi - lo
+pure func RKHashStrRev(s string, lo, hi int) uint32 {
+	return lo == hi ? uint32(0) :
+		RKHashStrRev(s, lo+1, hi)*PrimeRK + uint32(s[lo])
+}
+
+// PowRK is b to the power of e.
+ghost
+requires 0 <= e
+decreases e
+pure func PowRK(b uint32, e int) uint32 {
+	return e == 0 ? uint32(1) : PowRK(b, e-1) * b
+}
+
+// MatchesAt states that the pattern pat occurs in q at position j.
+ghost
+requires 0 <= j && j+len(pat) <= len(q)
+decreases
+pure func MatchesAt(q, pat seq[byte], j int) bool {
+	return q[j : j+len(pat)] == pat
+}
+
+// StrMatchesAt is the analogue of MatchesAt for strings. Gobra models strings
+// abstractly (string slicing and indexing are essentially uninterpreted, and
+// equal strings cannot be told apart from equal string identifiers), so a
+// pointwise characterization of a match is not expressible. StrMatchesAt
+// instead captures exactly the test performed by IndexRabinKarp: the window
+// hash matches and the string comparison s[j:j+len(substr)] == substr
+// succeeds.
+ghost
+requires 0 <= j && j+len(substr) <= len(s)
+decreases
+pure func StrMatchesAt(s, substr string, j int) bool {
+	return RKHashStr(s, j, j+len(substr)) == RKHashStr(substr, 0, len(substr)) &&
+		s[j:j+len(substr)] == substr
+}
+
+// lemmaBitFacts states the two facts about Go's >> and & operators on
+// non-negative operands that the verification of the PowRK loops relies on.
+//
+// ASSUMPTION: this lemma is trusted. Gobra encodes the bitwise operators as
+// uninterpreted functions without any axioms, so these (true) facts of Go's
+// semantics cannot be proven inside Gobra. They are standard: for i >= 0,
+// shifting right by one is division by two, and masking with 1 yields the
+// remainder modulo two.
+ghost
+trusted
+requires 0 <= i
+ensures i>>1 == i/2
+ensures i&1 == i%2
+decreases
+func lemmaBitFacts(i int)
+
+// lemmaMulComm3 is a commutativity helper for products of three factors.
+// Proving this rearrangement inline in a context with many quantified facts
+// makes Z3 struggle; as an isolated lemma it is immediate.
+ghost
+ensures x*y*z == x*z*y
+decreases
+func lemmaMulComm3(x, y, z uint32) {}
+
+// lemmaPowRKEven: b^(2k) == (b*b)^k.
+ghost
+requires 0 <= k
+ensures PowRK(b, 2*k) == PowRK(b*b, k)
+decreases k
+func lemmaPowRKEven(b uint32, k int) {
+	if k != 0 {
+		lemmaPowRKEven(b, k-1)
+		assert PowRK(b, 2*k) == PowRK(b, 2*k-1)*b
+		assert PowRK(b, 2*k-1) == PowRK(b, 2*k-2)*b
+		assert PowRK(b*b, k) == PowRK(b*b, k-1)*(b*b)
+	}
+}
+
+// lemmaPowRKOdd: b^(2k+1) == (b*b)^k * b.
+ghost
+requires 0 <= k
+ensures PowRK(b, 2*k+1) == PowRK(b*b, k)*b
+decreases
+func lemmaPowRKOdd(b uint32, k int) {
+	lemmaPowRKEven(b, k)
+	assert PowRK(b, 2*k+1) == PowRK(b, 2*k)*b
+}
+
+// lemmaRKHashRangeDropFirst peels the first byte off a range hash:
+//   RKHashRange(q, lo, hi) == q[lo]*PrimeRK^(hi-lo-1) + RKHashRange(q, lo+1, hi).
+ghost
+requires 0 <= lo && lo < hi && hi <= len(q)
+ensures RKHashRange(q, lo, hi) == PowRK(PrimeRK, hi-lo-1)*uint32(q[lo]) + RKHashRange(q, lo+1, hi)
+decreases hi - lo
+func lemmaRKHashRangeDropFirst(q seq[byte], lo, hi int) {
+	if lo+1 == hi {
+		assert RKHashRange(q, lo, hi) == RKHashRange(q, lo, hi-1)*PrimeRK + uint32(q[hi-1])
+	} else {
+		lemmaRKHashRangeDropFirst(q, lo, hi-1)
+		assert RKHashRange(q, lo, hi) == RKHashRange(q, lo, hi-1)*PrimeRK + uint32(q[hi-1])
+		assert RKHashRange(q, lo+1, hi) == RKHashRange(q, lo+1, hi-1)*PrimeRK + uint32(q[hi-1])
+		assert PowRK(PrimeRK, hi-lo-1) == PowRK(PrimeRK, hi-lo-2)*PrimeRK
+		lemmaMulComm3(PowRK(PrimeRK, hi-lo-2), uint32(q[lo]), PrimeRK)
+	}
+}
+
+// lemmaRKHashRangeRoll is the rolling-hash update step of Rabin-Karp: sliding
+// the window q[i-n:i] one position to the right multiplies the hash by
+// PrimeRK, adds the new last byte, and removes the contribution
+// PrimeRK^n * q[i-n] of the dropped byte.
+ghost
+requires 0 < n && n <= i && i < len(q)
+ensures RKHashRange(q, i-n+1, i+1) == RKHashRange(q, i-n, i)*PrimeRK + uint32(q[i]) - PowRK(PrimeRK, n)*uint32(q[i-n])
+decreases
+func lemmaRKHashRangeRoll(q seq[byte], n, i int) {
+	lemmaRKHashRangeDropFirst(q, i-n, i)
+	assert RKHashRange(q, i-n+1, i+1) == RKHashRange(q, i-n+1, i)*PrimeRK + uint32(q[i])
+	assert PowRK(PrimeRK, n) == PowRK(PrimeRK, n-1)*PrimeRK
+	lemmaMulComm3(PowRK(PrimeRK, n-1), uint32(q[i-n]), PrimeRK)
+}
+
+// lemmaRKHashRangePointwise: ranges that agree pointwise hash equally.
+ghost
+requires 0 <= j && 0 <= m && m <= len(pat) && j+m <= len(q)
+requires forall k int :: {q[j+k]} {pat[k]} 0 <= k && k < m ==> q[j+k] == pat[k]
+ensures RKHashRange(q, j, j+m) == RKHashRange(pat, 0, m)
+decreases m
+func lemmaRKHashRangePointwise(q, pat seq[byte], j, m int) {
+	if m > 0 {
+		lemmaRKHashRangePointwise(q, pat, j, m-1)
+		assert RKHashRange(q, j, j+m) == RKHashRange(q, j, j+m-1)*PrimeRK + uint32(q[j+m-1])
+		assert RKHashRange(pat, 0, m) == RKHashRange(pat, 0, m-1)*PrimeRK + uint32(pat[m-1])
+		assert q[j+m-1] == pat[m-1]
+	}
+}
+
+// lemmaRKHashRangeCongruence: if pat occurs in q at position j, then the
+// hash of the corresponding range of q equals the hash of pat.
+ghost
+requires 0 <= j && j+len(pat) <= len(q)
+requires q[j:j+len(pat)] == pat
+ensures RKHashRange(q, j, j+len(pat)) == RKHashRange(pat, 0, len(pat))
+decreases
+func lemmaRKHashRangeCongruence(q, pat seq[byte], j int) {
+	assert forall k int :: {q[j:j+len(pat)][k]} 0 <= k && k < len(pat) ==> q[j:j+len(pat)][k] == q[j+k]
+	assert forall k int :: {q[j+k]} {pat[k]} 0 <= k && k < len(pat) ==> q[j+k] == pat[k]
+	lemmaRKHashRangePointwise(q, pat, j, len(pat))
+}
+
+// lemmaMatchesAtTrue introduces MatchesAt from an established window match.
+ghost
+requires 0 <= j && j+len(pat) <= len(q)
+requires q[j:j+len(pat)] == pat
+ensures MatchesAt(q, pat, j)
+decreases
+func lemmaMatchesAtTrue(q, pat seq[byte], j int) {
+	assert MatchesAt(q, pat, j)
+}
+
+// lemmaMatchesAtFalseNeq refutes MatchesAt from an established window
+// mismatch.
+ghost
+requires 0 <= j && j+len(pat) <= len(q)
+requires q[j:j+len(pat)] != pat
+ensures !MatchesAt(q, pat, j)
+decreases
+func lemmaMatchesAtFalseNeq(q, pat seq[byte], j int) {
+	assert !MatchesAt(q, pat, j)
+}
+
+// lemmaMatchesAtFalseHash refutes MatchesAt from a window-hash mismatch: if
+// the pattern matched, the window hash would equal the pattern hash.
+ghost
+requires 0 <= j && j+len(pat) <= len(q)
+requires RKHashRange(q, j, j+len(pat)) != RKHashRange(pat, 0, len(pat))
+ensures !MatchesAt(q, pat, j)
+decreases
+func lemmaMatchesAtFalseHash(q, pat seq[byte], j int) {
+	if q[j:j+len(pat)] == pat {
+		lemmaRKHashRangeCongruence(q, pat, j)
+	}
+	assert !MatchesAt(q, pat, j)
+}
+
+// lemmaRKHashStrDropFirst is the string counterpart of
+// lemmaRKHashRangeDropFirst:
+//   RKHashStr(s, lo, hi) == s[lo]*PrimeRK^(hi-lo-1) + RKHashStr(s, lo+1, hi).
+ghost
+requires 0 <= lo && lo < hi && hi <= len(s)
+ensures RKHashStr(s, lo, hi) == PowRK(PrimeRK, hi-lo-1)*uint32(s[lo]) + RKHashStr(s, lo+1, hi)
+decreases hi - lo
+func lemmaRKHashStrDropFirst(s string, lo, hi int) {
+	if lo+1 == hi {
+		assert RKHashStr(s, lo, hi) == RKHashStr(s, lo, hi-1)*PrimeRK + uint32(s[hi-1])
+	} else {
+		lemmaRKHashStrDropFirst(s, lo, hi-1)
+		assert RKHashStr(s, lo, hi) == RKHashStr(s, lo, hi-1)*PrimeRK + uint32(s[hi-1])
+		assert RKHashStr(s, lo+1, hi) == RKHashStr(s, lo+1, hi-1)*PrimeRK + uint32(s[hi-1])
+		assert PowRK(PrimeRK, hi-lo-1) == PowRK(PrimeRK, hi-lo-2)*PrimeRK
+	}
+}

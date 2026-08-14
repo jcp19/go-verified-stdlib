@@ -20,7 +20,7 @@
 
 package list
 
-pred (l *List) Mem(es seq[*Element], vs seq[any]) {
+pred (l *List) Mem(es seq[*Element], vs seq[any], ini bool) {
 	acc(l) &&
 	len(es) == len(vs) &&
 	l.length == len(es) &&
@@ -28,10 +28,15 @@ pred (l *List) Mem(es seq[*Element], vs seq[any]) {
 	// belongs to l and stores the corresponding value
 	(forall i int :: {es[i]} 0 <= i && i < len(es) ==> (
 		acc(es[i]) && es[i] != &l.root && es[i].list == l && es[i].Value === vs[i])) &&
-	// an uninitialized list is empty
-	(l.root.next == nil ==> l.root.prev == nil && len(es) == 0) &&
+	// ini records whether the ring of l has been initialized (by Init or
+	// lazyInit). It distinguishes the zero List value from an initialized
+	// empty list; both are abstracted by empty sequences. A non-empty list
+	// is always initialized.
+	(len(es) > 0 ==> ini) &&
+	// an uninitialized list is the zero value
+	(!ini ==> l.root.next == nil && l.root.prev == nil) &&
 	// initialized empty list: the sentinel forms a ring with itself
-	(l.root.next != nil && len(es) == 0 ==> l.root.next == &l.root && l.root.prev == &l.root) &&
+	(ini && len(es) == 0 ==> l.root.next == &l.root && l.root.prev == &l.root) &&
 	// non-empty list: the sentinel is linked to the first and the last element
 	(len(es) > 0 ==> l.root.next == es[0] && l.root.prev == es[len(es)-1] &&
 		es[0].prev == &l.root && es[len(es)-1].next == &l.root) &&
@@ -41,16 +46,6 @@ pred (l *List) Mem(es seq[*Element], vs seq[any]) {
 	// solver chain instantiations along the sequence.
 	(forall i, k int :: {es[i], es[k]} 0 <= i && k == i+1 && k < len(es) ==> (
 		es[i].next == es[k] && es[k].prev == es[i]))
-}
-
-// isInit reports whether the ring of l has been initialized (by Init or
-// lazyInit). It distinguishes the zero List value from an initialized empty
-// list; both are abstracted by empty sequences.
-ghost
-requires l.Mem(es, vs)
-decreases
-pure func (l *List) isInit(es seq[*Element], vs seq[any]) bool {
-	return unfolding l.Mem(es, vs) in l.root.next != nil
 }
 
 // moveSeq returns the result of moving the element at index i of es to just

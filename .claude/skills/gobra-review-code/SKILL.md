@@ -291,7 +291,13 @@ Raise this when an interface's postconditions are visibly leaking implementation
 when two implementations were given incompatible-looking contracts for the same method. Do
 not raise it on a one-method interface with an already-crisp contract.
 
-## 8. Recurring findings worth a second look
+## 8. File organization
+Definitions of ghost types of the package under verification, predicate definitions, and ghost functions
+that are not lemmas should be defined in the `spec.gobra` file. Lemmas should be defined in a separate file
+(`lemmas.gobra`). Any trusted ghost member or member that, for some reason is not fully verified, should be
+in `assumptions.gobra`. This is a super strict check!!!!
+
+## 9. Recurring findings worth a second look
 
 These come up often enough in review to be worth scanning for, but they are judgement calls
 — report them with the reasoning, not as violations.
@@ -312,7 +318,7 @@ These come up often enough in review to be worth scanning for, but they are judg
   a measure that is a large arithmetic expression where a predicate instance would do is
   worth a comment.
 
-## 9. What not to flag
+## 10. What not to flag
 
 Review noise is expensive here: a Gobra author is usually mid-way through a proof, and every
 false finding costs a context switch away from it.

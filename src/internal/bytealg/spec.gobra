@@ -1,0 +1,25 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// This file holds the Gobra specification of package bytealg.
+//
+// The module is configured with "only_files_with_header", so Gobra only looks
+// at the files of this package that carry the "// +gobra" header above. Add
+// that header to a .go file of this package to bring it under verification.
+
+package bytealg
+
+// Equal reports whether a and b are the same length and contain the same
+// bytes. A nil argument is equivalent to an empty slice.
+//
+// Equal is declared in equal_native.go and implemented in per-architecture
+// assembly files (equal_*.s), which Gobra cannot verify. This contract is
+// its trusted specification.
+trusted
+requires false
+decreases
+pure func Equal(a, b []byte) bool

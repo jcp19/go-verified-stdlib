@@ -1,0 +1,26 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// This file holds a Gobra stub for the (unverified) package internal/cpu.
+// It declares only the members needed by the packages under verification.
+// The fields mirror (a subset of) the declarations in cpu.go.
+
+package cpu
+
+var X86 struct {
+	HasAVX2   bool
+	HasPOPCNT bool
+	HasSSE42  bool
+}
+
+var S390X struct {
+	HasVX bool
+}
+
+var PPC64 struct {
+	IsPOWER9 bool
+}

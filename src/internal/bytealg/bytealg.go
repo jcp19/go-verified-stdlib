@@ -2,23 +2,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// Enables Gobra in the current file.
+// +gobra
+
 package bytealg
 
-import (
-	"internal/cpu"
-	"unsafe"
-)
-
-// Offsets into internal/cpu records for use in assembly.
-const (
-	offsetX86HasSSE42  = unsafe.Offsetof(cpu.X86.HasSSE42)
-	offsetX86HasAVX2   = unsafe.Offsetof(cpu.X86.HasAVX2)
-	offsetX86HasPOPCNT = unsafe.Offsetof(cpu.X86.HasPOPCNT)
-
-	offsetS390xHasVX = unsafe.Offsetof(cpu.S390X.HasVX)
-
-	offsetPPC64HasPOWER9 = unsafe.Offsetof(cpu.PPC64.IsPOWER9)
-)
+// NOTE(gobra): the "Offsets into internal/cpu records" constant block and the
+// imports of internal/cpu and unsafe were moved, unchanged, to offsets.go:
+// unsafe.Offsetof is not supported by Gobra. See offsets.go.
 
 // MaxLen is the maximum length of the string to be searched for (argument b) in Index.
 // If MaxLen is not 0, make sure MaxLen >= 4.
@@ -33,6 +24,8 @@ const PrimeRK = 16777619
 
 // HashStrBytes returns the hash and the appropriate multiplicative
 // factor for use in Rabin-Karp algorithm.
+//@ trusted
+//@ requires false
 func HashStrBytes(sep []byte) (uint32, uint32) {
 	hash := uint32(0)
 	for i := 0; i < len(sep); i++ {
@@ -50,6 +43,8 @@ func HashStrBytes(sep []byte) (uint32, uint32) {
 
 // HashStr returns the hash and the appropriate multiplicative
 // factor for use in Rabin-Karp algorithm.
+//@ trusted
+//@ requires false
 func HashStr(sep string) (uint32, uint32) {
 	hash := uint32(0)
 	for i := 0; i < len(sep); i++ {
@@ -67,6 +62,8 @@ func HashStr(sep string) (uint32, uint32) {
 
 // HashStrRevBytes returns the hash of the reverse of sep and the
 // appropriate multiplicative factor for use in Rabin-Karp algorithm.
+//@ trusted
+//@ requires false
 func HashStrRevBytes(sep []byte) (uint32, uint32) {
 	hash := uint32(0)
 	for i := len(sep) - 1; i >= 0; i-- {
@@ -84,6 +81,8 @@ func HashStrRevBytes(sep []byte) (uint32, uint32) {
 
 // HashStrRev returns the hash of the reverse of sep and the
 // appropriate multiplicative factor for use in Rabin-Karp algorithm.
+//@ trusted
+//@ requires false
 func HashStrRev(sep string) (uint32, uint32) {
 	hash := uint32(0)
 	for i := len(sep) - 1; i >= 0; i-- {
@@ -101,6 +100,8 @@ func HashStrRev(sep string) (uint32, uint32) {
 
 // IndexRabinKarpBytes uses the Rabin-Karp search algorithm to return the index of the
 // first occurrence of substr in s, or -1 if not present.
+//@ trusted
+//@ requires false
 func IndexRabinKarpBytes(s, sep []byte) int {
 	// Rabin-Karp search
 	hashsep, pow := HashStrBytes(sep)
@@ -126,6 +127,8 @@ func IndexRabinKarpBytes(s, sep []byte) int {
 
 // IndexRabinKarp uses the Rabin-Karp search algorithm to return the index of the
 // first occurrence of substr in s, or -1 if not present.
+//@ trusted
+//@ requires false
 func IndexRabinKarp(s, substr string) int {
 	// Rabin-Karp search
 	hashss, pow := HashStr(substr)

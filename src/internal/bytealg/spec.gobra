@@ -43,7 +43,8 @@ package bytealg
 // assembly files (equal_*.s), which Gobra cannot verify. This bodyless pure
 // function is its trusted specification: two byte slices are Equal exactly
 // when they have the same (mathematical) sequence of bytes.
-requires acc(a, _) && acc(b, _)
+trusted
+requires acc(a) && acc(b)
 ensures res == (seq(a) == seq(b))
 decreases
 pure func Equal(a, b []byte) (res bool)
@@ -140,8 +141,8 @@ pure func StrMatchesAt(s, substr string, j int) bool {
 // semantics cannot be proven inside Gobra. They are standard: for i >= 0,
 // shifting right by one is division by two, and masking with 1 yields the
 // remainder modulo two.
-ghost
 trusted
+ghost
 requires 0 <= i
 ensures i>>1 == i/2
 ensures i&1 == i%2

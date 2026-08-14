@@ -192,8 +192,6 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	//@ invariant forall j int :: {MatchesAt(seq(s), seq(sep), j)} 0 <= j && j <= i-n ==> !MatchesAt(seq(s), seq(sep), j)
 	//@ decreases len(s) - i
 	for i := n; i < len(s); {
-		//@ assert seq(s)[i-n] == s[i-n] && seq(s)[i] == s[i]
-		//@ lemmaRKHashRangeRoll(seq(s), n, i)
 		h *= PrimeRK
 		h += uint32(s[i])
 		h -= pow * uint32(s[i-n])
@@ -204,8 +202,11 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 		if h == hashsep && Equal(s[i-n:i], sep) {
 			//@ assert seq(s)[i-n:i] == seq(sep)
 			//@ assert MatchesAt(seq(s), seq(sep), i-n)
+			//@ assert forall j int :: {MatchesAt(seq(s), seq(sep), j)} 0 <= j && j < i-n ==> !MatchesAt(seq(s), seq(sep), j)
 			return i - n
 		}
+		//@ assert seq(s)[i-1-n] == s[i-1-n] && seq(s)[i-1] == s[i-1]
+		//@ lemmaRKHashRangeRoll(seq(s), n, i-1)
 		//@ ghost if h != hashsep { lemmaMatchesAtFalseHash(seq(s), seq(sep), i-n) } else { lemmaMatchesAtFalseNeq(seq(s), seq(sep), i-n) }
 	}
 	return -1

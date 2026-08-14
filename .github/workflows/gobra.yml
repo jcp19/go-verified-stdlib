@@ -20,3 +20,9 @@ jobs:
         with:
           configFile: 'src/sort'
           timeout: 1h
+
+      - name: Verify package internal/bytealg
+        uses: viperproject/gobra-action@main
+        with:
+          configFile: 'src/internal/bytealg'
+          timeout: 1h

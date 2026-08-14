@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// +gobra
+
 // Package list implements a doubly linked list.
 //
 // To iterate over a list (where l is a *List):
@@ -28,6 +30,8 @@ type Element struct {
 }
 
 // Next returns the next list element or nil.
+//@ trusted
+//@ requires false
 func (e *Element) Next() *Element {
 	if p := e.next; e.list != nil && p != &e.list.root {
 		return p
@@ -36,6 +40,8 @@ func (e *Element) Next() *Element {
 }
 
 // Prev returns the previous list element or nil.
+//@ trusted
+//@ requires false
 func (e *Element) Prev() *Element {
 	if p := e.prev; e.list != nil && p != &e.list.root {
 		return p
@@ -47,74 +53,94 @@ func (e *Element) Prev() *Element {
 // The zero value for List is an empty list ready to use.
 type List struct {
 	root Element // sentinel list element, only &root, root.prev, and root.next are used
-	len  int     // current list length excluding (this) sentinel element
+	length int     // current list length excluding (this) sentinel element
 }
 
 // Init initializes or clears list l.
+//@ trusted
+//@ requires false
 func (l *List) Init() *List {
 	l.root.next = &l.root
 	l.root.prev = &l.root
-	l.len = 0
+	l.length = 0
 	return l
 }
 
 // New returns an initialized list.
+//@ trusted
+//@ requires false
 func New() *List { return new(List).Init() }
 
 // Len returns the number of elements of list l.
 // The complexity is O(1).
-func (l *List) Len() int { return l.len }
+//@ trusted
+//@ requires false
+func (l *List) Len() int { return l.length }
 
 // Front returns the first element of list l or nil if the list is empty.
+//@ trusted
+//@ requires false
 func (l *List) Front() *Element {
-	if l.len == 0 {
+	if l.length == 0 {
 		return nil
 	}
 	return l.root.next
 }
 
 // Back returns the last element of list l or nil if the list is empty.
+//@ trusted
+//@ requires false
 func (l *List) Back() *Element {
-	if l.len == 0 {
+	if l.length == 0 {
 		return nil
 	}
 	return l.root.prev
 }
 
 // lazyInit lazily initializes a zero List value.
+//@ trusted
+//@ requires false
 func (l *List) lazyInit() {
 	if l.root.next == nil {
 		l.Init()
 	}
 }
 
-// insert inserts e after at, increments l.len, and returns e.
+// insert inserts e after at, increments l.length, and returns e.
+//@ trusted
+//@ requires false
 func (l *List) insert(e, at *Element) *Element {
 	e.prev = at
 	e.next = at.next
 	e.prev.next = e
 	e.next.prev = e
 	e.list = l
-	l.len++
+	l.length++
 	return e
 }
 
 // insertValue is a convenience wrapper for insert(&Element{Value: v}, at).
+//@ trusted
+//@ requires false
 func (l *List) insertValue(v any, at *Element) *Element {
 	return l.insert(&Element{Value: v}, at)
 }
 
-// remove removes e from its list, decrements l.len
+// remove removes e from its list, decrements l.length
+//@ trusted
+//@ requires false
 func (l *List) remove(e *Element) {
 	e.prev.next = e.next
 	e.next.prev = e.prev
 	e.next = nil // avoid memory leaks
 	e.prev = nil // avoid memory leaks
 	e.list = nil
-	l.len--
+	l.length--
 }
 
 // move moves e to next to at.
+//@ trusted
+//@ requires false
 func (l *List) move(e, at *Element) {
 	if e == at {
 		return
@@ -131,6 +157,8 @@ func (l *List) move(e, at *Element) {
 // Remove removes e from l if e is an element of list l.
 // It returns the element value e.Value.
 // The element must not be nil.
+//@ trusted
+//@ requires false
 func (l *List) Remove(e *Element) any {
 	if e.list == l {
 		// if e.list == l, l must have been initialized when e was inserted
@@ -141,12 +169,16 @@ func (l *List) Remove(e *Element) any {
 }
 
 // PushFront inserts a new element e with value v at the front of list l and returns e.
+//@ trusted
+//@ requires false
 func (l *List) PushFront(v any) *Element {
 	l.lazyInit()
 	return l.insertValue(v, &l.root)
 }
 
 // PushBack inserts a new element e with value v at the back of list l and returns e.
+//@ trusted
+//@ requires false
 func (l *List) PushBack(v any) *Element {
 	l.lazyInit()
 	return l.insertValue(v, l.root.prev)
@@ -155,6 +187,8 @@ func (l *List) PushBack(v any) *Element {
 // InsertBefore inserts a new element e with value v immediately before mark and returns e.
 // If mark is not an element of l, the list is not modified.
 // The mark must not be nil.
+//@ trusted
+//@ requires false
 func (l *List) InsertBefore(v any, mark *Element) *Element {
 	if mark.list != l {
 		return nil
@@ -166,6 +200,8 @@ func (l *List) InsertBefore(v any, mark *Element) *Element {
 // InsertAfter inserts a new element e with value v immediately after mark and returns e.
 // If mark is not an element of l, the list is not modified.
 // The mark must not be nil.
+//@ trusted
+//@ requires false
 func (l *List) InsertAfter(v any, mark *Element) *Element {
 	if mark.list != l {
 		return nil
@@ -177,6 +213,8 @@ func (l *List) InsertAfter(v any, mark *Element) *Element {
 // MoveToFront moves element e to the front of list l.
 // If e is not an element of l, the list is not modified.
 // The element must not be nil.
+//@ trusted
+//@ requires false
 func (l *List) MoveToFront(e *Element) {
 	if e.list != l || l.root.next == e {
 		return
@@ -188,6 +226,8 @@ func (l *List) MoveToFront(e *Element) {
 // MoveToBack moves element e to the back of list l.
 // If e is not an element of l, the list is not modified.
 // The element must not be nil.
+//@ trusted
+//@ requires false
 func (l *List) MoveToBack(e *Element) {
 	if e.list != l || l.root.prev == e {
 		return
@@ -199,6 +239,8 @@ func (l *List) MoveToBack(e *Element) {
 // MoveBefore moves element e to its new position before mark.
 // If e or mark is not an element of l, or e == mark, the list is not modified.
 // The element and mark must not be nil.
+//@ trusted
+//@ requires false
 func (l *List) MoveBefore(e, mark *Element) {
 	if e.list != l || e == mark || mark.list != l {
 		return
@@ -209,6 +251,8 @@ func (l *List) MoveBefore(e, mark *Element) {
 // MoveAfter moves element e to its new position after mark.
 // If e or mark is not an element of l, or e == mark, the list is not modified.
 // The element and mark must not be nil.
+//@ trusted
+//@ requires false
 func (l *List) MoveAfter(e, mark *Element) {
 	if e.list != l || e == mark || mark.list != l {
 		return
@@ -218,6 +262,8 @@ func (l *List) MoveAfter(e, mark *Element) {
 
 // PushBackList inserts a copy of another list at the back of list l.
 // The lists l and other may be the same. They must not be nil.
+//@ trusted
+//@ requires false
 func (l *List) PushBackList(other *List) {
 	l.lazyInit()
 	for i, e := other.Len(), other.Front(); i > 0; i, e = i-1, e.Next() {
@@ -227,6 +273,8 @@ func (l *List) PushBackList(other *List) {
 
 // PushFrontList inserts a copy of another list at the front of list l.
 // The lists l and other may be the same. They must not be nil.
+//@ trusted
+//@ requires false
 func (l *List) PushFrontList(other *List) {
 	l.lazyInit()
 	for i, e := other.Len(), other.Back(); i > 0; i, e = i-1, e.Prev() {

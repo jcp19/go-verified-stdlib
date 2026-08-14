@@ -1,0 +1,14 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// This file holds the Gobra specification of package container/list:
+// ghost types, predicate definitions, and ghost (pure) functions.
+//
+// The module is configured with "only_files_with_header", so Gobra only looks
+// at the files of this package that carry the "// +gobra" header above.
+
+package list

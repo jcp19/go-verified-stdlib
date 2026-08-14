@@ -32,8 +32,7 @@ const PrimeRK = 16777619
 func HashStrBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 	hash := uint32(0)
 	//@ invariant 0 <= i && i <= len(sep)
-	//@ invariant acc(sep, p)
-	//@ invariant seq(sep) == old(seq(sep))
+	//@ invariant acc(sep, p/2)
 	//@ invariant hash == RKHashRange(seq(sep), 0, i)
 	//@ decreases len(sep) - i
 	for i := 0; i < len(sep); i++ {
@@ -41,8 +40,7 @@ func HashStrBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 		hash = hash*PrimeRK + uint32(sep[i])
 	}
 	var pow, sq uint32 = 1, PrimeRK
-	//@ invariant acc(sep, p)
-	//@ invariant seq(sep) == old(seq(sep))
+	//@ invariant acc(sep, p/2)
 	//@ invariant 0 <= i
 	//@ invariant pow*PowRK(sq, i) == PowRK(PrimeRK, len(sep))
 	//@ decreases i
@@ -95,8 +93,7 @@ func HashStr(sep string) (rhash, rpow uint32) {
 func HashStrRevBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 	hash := uint32(0)
 	//@ invariant -1 <= i && i <= len(sep)-1
-	//@ invariant acc(sep, p)
-	//@ invariant seq(sep) == old(seq(sep))
+	//@ invariant acc(sep, p/2)
 	//@ invariant hash == RKHashRevRange(seq(sep), i+1, len(sep))
 	//@ decreases i + 1
 	for i := len(sep) - 1; i >= 0; i-- {
@@ -104,8 +101,7 @@ func HashStrRevBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 		hash = hash*PrimeRK + uint32(sep[i])
 	}
 	var pow, sq uint32 = 1, PrimeRK
-	//@ invariant acc(sep, p)
-	//@ invariant seq(sep) == old(seq(sep))
+	//@ invariant acc(sep, p/2)
 	//@ invariant 0 <= i
 	//@ invariant pow*PowRK(sq, i) == PowRK(PrimeRK, len(sep))
 	//@ decreases i
@@ -164,8 +160,7 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	n := len(sep)
 	var h uint32
 	//@ invariant 0 <= i && i <= n
-	//@ invariant acc(s, p) && acc(sep, p)
-	//@ invariant seq(s) == old(seq(s)) && seq(sep) == old(seq(sep))
+	//@ invariant acc(s, p/2) && acc(sep, p/2)
 	//@ invariant hashsep == RKHash(seq(sep)) && pow == PowRK(PrimeRK, n)
 	//@ invariant h == RKHashRange(seq(s), 0, i)
 	//@ decreases n - i
@@ -190,8 +185,7 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	//@ assert reveal NoMatchBefore(seq(s), seq(sep), 1)
 	//@ invariant 0 < n
 	//@ invariant n <= i && i <= len(s)
-	//@ invariant acc(s, p) && acc(sep, p)
-	//@ invariant seq(s) == old(seq(s)) && seq(sep) == old(seq(sep))
+	//@ invariant acc(s, p/3) && acc(sep, p/3)
 	//@ invariant hashsep == RKHash(seq(sep)) && pow == PowRK(PrimeRK, n)
 	//@ invariant h == RKHashRange(seq(s), i-n, i)
 	//@ invariant NoMatchBefore(seq(s), seq(sep), i-n+1)
@@ -208,7 +202,6 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 			//@ assert seq(s)[i-n:i] == seq(sep)
 			//@ assert MatchesAt(seq(s), seq(sep), i-n)
 			//@ assert NoMatchBefore(seq(s), seq(sep), i-n)
-			//@ assert seq(s) == old(seq(s)) && seq(sep) == old(seq(sep))
 			//@ assert NoMatchBefore(old(seq(s)), old(seq(sep)), i-n)
 			return i - n
 		}

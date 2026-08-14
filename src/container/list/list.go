@@ -30,112 +30,217 @@ type Element struct {
 }
 
 // Next returns the next list element or nil.
-//@ trusted
-//@ requires false
-func (e *Element) Next() *Element {
+//
+// The ghost parameters describe where e currently lives: if l is non-nil,
+// e is the element at index i of list l; if l is nil, e is detached (it does
+// not belong to any list) and the caller owns it.
+//@ requires l != nil ==> l.Mem(es, vs) && 0 <= i && i < len(es) && es[i] == e
+//@ requires l == nil ==> acc(e) && e.list == nil
+//@ ensures  l != nil ==> l.Mem(es, vs)
+//@ ensures  l != nil && i < len(es)-1 ==> ret == es[i+1]
+//@ ensures  l != nil && i == len(es)-1 ==> ret == nil
+//@ ensures  l == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
+//@ decreases
+func (e *Element) Next( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[any], ghost i int @*/ ) (ret *Element) {
+	//@ ghost if l != nil { unfold l.Mem(es, vs) }
 	if p := e.next; e.list != nil && p != &e.list.root {
+		//@ ghost if l != nil { fold l.Mem(es, vs) }
 		return p
 	}
+	//@ ghost if l != nil { fold l.Mem(es, vs) }
 	return nil
 }
 
 // Prev returns the previous list element or nil.
-//@ trusted
-//@ requires false
-func (e *Element) Prev() *Element {
+//
+// The ghost parameters play the same role as in Next.
+//@ requires l != nil ==> l.Mem(es, vs) && 0 <= i && i < len(es) && es[i] == e
+//@ requires l == nil ==> acc(e) && e.list == nil
+//@ ensures  l != nil ==> l.Mem(es, vs)
+//@ ensures  l != nil && i > 0 ==> ret == es[i-1]
+//@ ensures  l != nil && i == 0 ==> ret == nil
+//@ ensures  l == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
+//@ decreases
+func (e *Element) Prev( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[any], ghost i int @*/ ) (ret *Element) {
+	//@ ghost if l != nil { unfold l.Mem(es, vs) }
 	if p := e.prev; e.list != nil && p != &e.list.root {
+		//@ ghost if l != nil { fold l.Mem(es, vs) }
 		return p
 	}
+	//@ ghost if l != nil { fold l.Mem(es, vs) }
 	return nil
 }
 
 // List represents a doubly linked list.
 // The zero value for List is an empty list ready to use.
 type List struct {
-	root Element // sentinel list element, only &root, root.prev, and root.next are used
+	root   Element // sentinel list element, only &root, root.prev, and root.next are used
 	length int     // current list length excluding (this) sentinel element
 }
 
 // Init initializes or clears list l.
-//@ trusted
-//@ requires false
-func (l *List) Init() *List {
+//@ requires l.Mem(es, vs)
+//@ ensures  l.Mem(seq[*Element]{}, seq[any]{})
+//@ ensures  l.isInit(seq[*Element]{}, seq[any]{})
+//@ ensures  ret == l
+//@ decreases
+func (l *List) Init( /*@ ghost es seq[*Element], ghost vs seq[any] @*/ ) (ret *List) {
+	//@ unfold l.Mem(es, vs)
 	l.root.next = &l.root
 	l.root.prev = &l.root
 	l.length = 0
+	//@ fold l.Mem(seq[*Element]{}, seq[any]{})
 	return l
 }
 
 // New returns an initialized list.
-//@ trusted
-//@ requires false
-func New() *List { return new(List).Init() }
+//@ ensures ret != nil
+//@ ensures ret.Mem(seq[*Element]{}, seq[any]{})
+//@ ensures ret.isInit(seq[*Element]{}, seq[any]{})
+//@ decreases
+func New() (ret *List) {
+	l := new(List)
+	//@ fold l.Mem(seq[*Element]{}, seq[any]{})
+	return l.Init( /*@ seq[*Element]{}, seq[any]{} @*/ )
+}
 
 // Len returns the number of elements of list l.
 // The complexity is O(1).
-//@ trusted
-//@ requires false
-func (l *List) Len() int { return l.length }
+//@ requires acc(l.Mem(es, vs), _)
+//@ ensures  res == len(es)
+//@ decreases
+//@ pure
+func (l *List) Len( /*@ ghost es seq[*Element], ghost vs seq[any] @*/ ) (res int) {
+	return /*@ unfolding acc(l.Mem(es, vs), _) in @*/ l.length
+}
 
 // Front returns the first element of list l or nil if the list is empty.
-//@ trusted
-//@ requires false
-func (l *List) Front() *Element {
+//@ requires l.Mem(es, vs)
+//@ ensures  l.Mem(es, vs)
+//@ ensures  len(es) > 0 ==> ret == es[0]
+//@ ensures  len(es) == 0 ==> ret == nil
+//@ decreases
+func (l *List) Front( /*@ ghost es seq[*Element], ghost vs seq[any] @*/ ) (ret *Element) {
+	//@ unfold l.Mem(es, vs)
 	if l.length == 0 {
+		//@ fold l.Mem(es, vs)
 		return nil
 	}
-	return l.root.next
+	res := l.root.next
+	//@ fold l.Mem(es, vs)
+	return res
 }
 
 // Back returns the last element of list l or nil if the list is empty.
-//@ trusted
-//@ requires false
-func (l *List) Back() *Element {
+//@ requires l.Mem(es, vs)
+//@ ensures  l.Mem(es, vs)
+//@ ensures  len(es) > 0 ==> ret == es[len(es)-1]
+//@ ensures  len(es) == 0 ==> ret == nil
+//@ decreases
+func (l *List) Back( /*@ ghost es seq[*Element], ghost vs seq[any] @*/ ) (ret *Element) {
+	//@ unfold l.Mem(es, vs)
 	if l.length == 0 {
+		//@ fold l.Mem(es, vs)
 		return nil
 	}
-	return l.root.prev
+	res := l.root.prev
+	//@ fold l.Mem(es, vs)
+	return res
 }
 
 // lazyInit lazily initializes a zero List value.
-//@ trusted
-//@ requires false
-func (l *List) lazyInit() {
-	if l.root.next == nil {
-		l.Init()
+//@ requires l.Mem(es, vs)
+//@ ensures  l.Mem(es, vs)
+//@ ensures  l.isInit(es, vs)
+//@ decreases
+func (l *List) lazyInit( /*@ ghost es seq[*Element], ghost vs seq[any] @*/ ) {
+	//@ unfold l.Mem(es, vs)
+	uninit := l.root.next == nil
+	//@ fold l.Mem(es, vs)
+	if uninit {
+		//@ assert es == seq[*Element]{} && vs == seq[any]{}
+		l.Init( /*@ es, vs @*/ )
 	}
 }
 
 // insert inserts e after at, increments l.length, and returns e.
-//@ trusted
-//@ requires false
-func (l *List) insert(e, at *Element) *Element {
+//
+// The ghost index j identifies at: j == -1 stands for the sentinel &l.root,
+// and 0 <= j < len(es) stands for es[j].
+//@ requires l.Mem(es, vs)
+//@ requires l.isInit(es, vs)
+//@ requires acc(e) && e.list == nil
+//@ requires -1 <= j && j < len(es)
+//@ requires at == (j == -1 ? &l.root : es[j])
+//@ ensures  l.Mem(es[:j+1] ++ seq[*Element]{e} ++ es[j+1:], vs[:j+1] ++ seq[any]{old(e.Value)} ++ vs[j+1:])
+//@ ensures  ret == e && ret != nil
+//@ decreases
+func (l *List) insert(e, at *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost j int @*/ ) (ret *Element) {
+	//@ unfold l.Mem(es, vs)
+	// e is detached (e.list == nil) while every element of es has list == l,
+	// and the sentinel is owned separately, so e is distinct from all of them.
+	//@ assert forall i1 int :: {es[i1]} 0 <= i1 && i1 < len(es) ==> es[i1] != e
+	//@ assert e != &l.root
+	//@ ghost var es2 seq[*Element] = es[:j+1] ++ seq[*Element]{e} ++ es[j+1:]
+	//@ ghost var vs2 seq[any] = vs[:j+1] ++ seq[any]{e.Value} ++ vs[j+1:]
+	//@ assert len(es2) == len(es) + 1 && len(vs2) == len(vs) + 1
+	//@ assert forall k int :: {es2[k]} 0 <= k && k <= j ==> es2[k] == es[k]
+	//@ assert forall k int :: {vs2[k]} 0 <= k && k <= j ==> vs2[k] === vs[k]
+	//@ assert es2[j+1] == e && vs2[j+1] === e.Value
+	//@ assert forall k int :: {es2[k]} j+1 < k && k < len(es2) ==> es2[k] == es[k-1]
+	//@ assert forall k int :: {vs2[k]} j+1 < k && k < len(vs2) ==> vs2[k] === vs[k-1]
+	// name at's successor so that the linkage quantifier applies to it
+	//@ assert j == -1 && len(es) > 0 ==> l.root.next == es[0]
+	//@ assert 0 <= j && j < len(es)-1 ==> es[j].next == es[j+1]
+	//@ assert j == len(es)-1 && j >= 0 ==> es[j].next == &l.root
 	e.prev = at
 	e.next = at.next
 	e.prev.next = e
 	e.next.prev = e
 	e.list = l
 	l.length++
+	//@ fold l.Mem(es2, vs2)
 	return e
 }
 
 // insertValue is a convenience wrapper for insert(&Element{Value: v}, at).
-//@ trusted
-//@ requires false
-func (l *List) insertValue(v any, at *Element) *Element {
-	return l.insert(&Element{Value: v}, at)
+//@ requires l.Mem(es, vs)
+//@ requires l.isInit(es, vs)
+//@ requires -1 <= j && j < len(es)
+//@ requires at == (j == -1 ? &l.root : es[j])
+//@ ensures  l.Mem(es[:j+1] ++ seq[*Element]{ret} ++ es[j+1:], vs[:j+1] ++ seq[any]{v} ++ vs[j+1:])
+//@ ensures  ret != nil
+//@ decreases
+func (l *List) insertValue(v any, at *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost j int @*/ ) (ret *Element) {
+	return l.insert(&Element{Value: v}, at /*@ , es, vs, j @*/ )
 }
 
 // remove removes e from its list, decrements l.length
-//@ trusted
-//@ requires false
-func (l *List) remove(e *Element) {
+//@ requires l.Mem(es, vs)
+//@ requires len(es) == len(vs)
+//@ requires 0 <= i && i < len(es) && es[i] == e
+//@ ensures  l.Mem(es[:i] ++ es[i+1:], vs[:i] ++ vs[i+1:])
+//@ ensures  acc(e) && e.list == nil && e.next == nil && e.prev == nil && e.Value === vs[i]
+//@ decreases
+func (l *List) remove(e *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost i int @*/ ) {
+	//@ unfold l.Mem(es, vs)
+	//@ ghost var es2 seq[*Element] = es[:i] ++ es[i+1:]
+	//@ ghost var vs2 seq[any] = vs[:i] ++ vs[i+1:]
+	//@ assert len(es2) == len(es) - 1 && len(vs2) == len(vs) - 1
+	//@ assert forall k int :: {es2[k]} 0 <= k && k < i ==> es2[k] == es[k] && vs2[k] === vs[k]
+	//@ assert forall k int :: {es2[k]} i <= k && k < len(es2) ==> es2[k] == es[k+1] && vs2[k] === vs[k+1]
+	// name e's neighbors so that the linkage quantifier applies to them
+	//@ assert i > 0 ==> es[i].prev == es[i-1]
+	//@ assert i == 0 ==> es[i].prev == &l.root
+	//@ assert i < len(es)-1 ==> es[i].next == es[i+1]
+	//@ assert i == len(es)-1 ==> es[i].next == &l.root
 	e.prev.next = e.next
 	e.next.prev = e.prev
 	e.next = nil // avoid memory leaks
 	e.prev = nil // avoid memory leaks
 	e.list = nil
 	l.length--
+	//@ fold l.Mem(es2, vs2)
 }
 
 // move moves e to next to at.

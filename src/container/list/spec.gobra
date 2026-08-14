@@ -6,9 +6,76 @@
 // +gobra
 
 // This file holds the Gobra specification of package container/list:
-// ghost types, predicate definitions, and ghost (pure) functions.
+// predicate definitions and ghost (pure) functions.
 //
-// The module is configured with "only_files_with_header", so Gobra only looks
-// at the files of this package that carry the "// +gobra" header above.
+// A list l is abstracted by a pair of mathematical sequences:
+//   - es seq[*Element]: the elements of the list, in list order, and
+//   - vs seq[any]:      the values stored in those elements (vs[i] is the
+//                       value of es[i]).
+// The predicate l.Mem(es, vs) owns the list header l and all elements of es,
+// and states that the doubly-linked ring rooted at the sentinel &l.root links
+// exactly the elements of es, in order. The zero value of List (an
+// uninitialized list, root.next == nil) is also covered by Mem with empty
+// sequences, so clients may use a zero List directly.
 
 package list
+
+pred (l *List) Mem(es seq[*Element], vs seq[any]) {
+	acc(l) &&
+	len(es) == len(vs) &&
+	l.length == len(es) &&
+	// ownership of all elements; no element is the sentinel; every element
+	// belongs to l and stores the corresponding value
+	(forall i int :: {es[i]} 0 <= i && i < len(es) ==> (
+		acc(es[i]) && es[i] != &l.root && es[i].list == l && es[i].Value === vs[i])) &&
+	// an uninitialized list is empty
+	(l.root.next == nil ==> l.root.prev == nil && len(es) == 0) &&
+	// initialized empty list: the sentinel forms a ring with itself
+	(l.root.next != nil && len(es) == 0 ==> l.root.next == &l.root && l.root.prev == &l.root) &&
+	// non-empty list: the sentinel is linked to the first and the last element
+	(len(es) > 0 ==> l.root.next == es[0] && l.root.prev == es[len(es)-1] &&
+		es[0].prev == &l.root && es[len(es)-1].next == &l.root) &&
+	// consecutive elements are linked to each other. The quantifier is
+	// phrased over pairs of indices (guarded by k == i+1) so that its body
+	// introduces no new seq-index terms, which would otherwise let the
+	// solver chain instantiations along the sequence.
+	(forall i, k int :: {es[i], es[k]} 0 <= i && k == i+1 && k < len(es) ==> (
+		es[i].next == es[k] && es[k].prev == es[i]))
+}
+
+// isInit reports whether the ring of l has been initialized (by Init or
+// lazyInit). It distinguishes the zero List value from an initialized empty
+// list; both are abstracted by empty sequences.
+ghost
+requires l.Mem(es, vs)
+decreases
+pure func (l *List) isInit(es seq[*Element], vs seq[any]) bool {
+	return unfolding l.Mem(es, vs) in l.root.next != nil
+}
+
+// moveSeq returns the result of moving the element at index i of es to just
+// after position j, where j == -1 stands for the front of the sequence.
+// It matches the effect of the internal method l.move(es[i], at) with
+// at == (j == -1 ? &l.root : es[j]).
+ghost
+requires 0 <= i && i < len(es)
+requires -1 <= j && j < len(es)
+decreases
+pure func moveSeq(es seq[*Element], i, j int) seq[*Element] {
+	return i == j ? es :
+		(let rest := es[:i] ++ es[i+1:] in
+		(let pos := (j < i ? j+1 : j) in
+		rest[:pos] ++ seq[*Element]{es[i]} ++ rest[pos:]))
+}
+
+// moveSeqV is moveSeq for the value sequence.
+ghost
+requires 0 <= i && i < len(vs)
+requires -1 <= j && j < len(vs)
+decreases
+pure func moveSeqV(vs seq[any], i, j int) seq[any] {
+	return i == j ? vs :
+		(let rest := vs[:i] ++ vs[i+1:] in
+		(let pos := (j < i ? j+1 : j) in
+		rest[:pos] ++ seq[any]{vs[i]} ++ rest[pos:]))
+}

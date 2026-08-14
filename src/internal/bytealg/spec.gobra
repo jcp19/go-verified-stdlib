@@ -133,6 +133,33 @@ pure func StrMatchesAt(s, substr string, j int) bool {
 		s[j:j+len(substr)] == substr
 }
 
+// NoMatchBefore states that pat occurs at none of the positions 0 <= j < hi
+// of q. It is the recursive counterpart of
+//   forall j int :: 0 <= j && j < hi ==> !MatchesAt(q, pat, j)
+// (see LemmaNoMatchBeforePointwise). The recursive form is used in contracts
+// because a single function application survives into postcondition states,
+// whereas quantified facts over the heap-dependent seq(s)/seq(sep) terms do
+// not reliably re-trigger there.
+ghost
+requires 0 <= hi && hi-1+len(pat) <= len(q)
+decreases hi
+pure func NoMatchBefore(q, pat seq[byte], hi int) bool {
+	return hi == 0 ? true : (!MatchesAt(q, pat, hi-1) && NoMatchBefore(q, pat, hi-1))
+}
+
+// LemmaNoMatchBeforePointwise lets clients turn NoMatchBefore into the
+// pointwise form.
+ghost
+requires 0 <= hi && hi-1+len(pat) <= len(q)
+requires NoMatchBefore(q, pat, hi)
+ensures forall j int :: {MatchesAt(q, pat, j)} 0 <= j && j < hi ==> !MatchesAt(q, pat, j)
+decreases hi
+func LemmaNoMatchBeforePointwise(q, pat seq[byte], hi int) {
+	if hi > 0 {
+		LemmaNoMatchBeforePointwise(q, pat, hi-1)
+	}
+}
+
 // lemmaBitFacts states the two facts about Go's >> and & operators on
 // non-negative operands that the verification of the PowRK loops relies on.
 //

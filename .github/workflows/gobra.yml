@@ -21,9 +21,11 @@ jobs:
           configFile: 'src/sort'
           timeout: 1h
 
+      # Note: the action's default javaXss is 1g, which is also the maximum
+      # the image's JVM accepts ("exceeds the maximum representable size" for
+      # anything larger), so the stack size is left at its default.
       - name: Verify package internal/bytealg
         uses: viperproject/gobra-action@main
         with:
           configFile: 'src/internal/bytealg'
-          javaXss: 1500m
           timeout: 1h

@@ -8,45 +8,73 @@
 // This file holds the Gobra specification of package container/list:
 // predicate definitions and ghost (pure) functions.
 //
-// A list l is abstracted by two mathematical sequences and a flag:
-//   - es seq[*Element]: the elements of the list, in list order,
-//   - vs seq[any]:      the values stored in those elements (vs[i] is the
-//                       value of es[i]), and
-//   - ini bool:         whether the sentinel ring has been initialized.
-// The predicate l.Mem(es, vs, ini) owns the list header l and all elements of
-// es, and states that the doubly-linked ring rooted at the sentinel &l.root
-// links exactly the elements of es, in order. The zero value of List is
-// covered by Mem with empty sequences and ini == false, so clients may use a
-// zero List directly.
+// A list carries its own abstraction in three ghost fields, read through the
+// getters below:
+//   - Es() seq[*Element]: the elements of the list, in list order,
+//   - Vs() seq[any]:      the values stored in those elements (Vs()[i] is the
+//                         value of Es()[i]), and
+//   - Ini() bool:         whether the sentinel ring has been initialized.
+// The predicate l.Mem() owns the list header l and all elements of Es(), and
+// states that the doubly-linked ring rooted at the sentinel &l.root links
+// exactly those elements, in order. The zero value of List has empty
+// sequences and Ini() == false, so clients may use a zero List directly.
 
 package list
 
-pred (l *List) Mem(es seq[*Element], vs seq[any], ini bool) {
+pred (l *List) Mem() {
 	acc(l) &&
-	len(es) == len(vs) &&
-	l.length == len(es) &&
+	len(l.es) == len(l.vs) &&
+	l.length == len(l.es) &&
 	// ownership of all elements; no element is the sentinel; every element
 	// belongs to l and stores the corresponding value
-	(forall i int :: {es[i]} 0 <= i && i < len(es) ==> (
-		acc(es[i]) && es[i] != &l.root && es[i].list == l && es[i].Value === vs[i])) &&
-	// ini records whether the ring of l has been initialized (by Init or
-	// lazyInit). It distinguishes the zero List value from an initialized
-	// empty list; both are abstracted by empty sequences. A non-empty list
-	// is always initialized.
-	(len(es) > 0 ==> ini) &&
+	(forall i int :: {l.es[i]} 0 <= i && i < len(l.es) ==> (
+		acc(l.es[i]) && l.es[i] != &l.root && l.es[i].list == l && l.es[i].Value === l.vs[i])) &&
+	// l.ini distinguishes the zero List value from an initialized empty list;
+	// both have empty sequences. A non-empty list is always initialized.
+	(len(l.es) > 0 ==> l.ini) &&
 	// an uninitialized list is the zero value
-	(!ini ==> l.root.next == nil && l.root.prev == nil) &&
+	(!l.ini ==> l.root.next == nil && l.root.prev == nil) &&
 	// initialized empty list: the sentinel forms a ring with itself
-	(ini && len(es) == 0 ==> l.root.next == &l.root && l.root.prev == &l.root) &&
+	(l.ini && len(l.es) == 0 ==> l.root.next == &l.root && l.root.prev == &l.root) &&
 	// non-empty list: the sentinel is linked to the first and the last element
-	(len(es) > 0 ==> l.root.next == es[0] && l.root.prev == es[len(es)-1] &&
-		es[0].prev == &l.root && es[len(es)-1].next == &l.root) &&
+	(len(l.es) > 0 ==> l.root.next == l.es[0] && l.root.prev == l.es[len(l.es)-1] &&
+		l.es[0].prev == &l.root && l.es[len(l.es)-1].next == &l.root) &&
 	// consecutive elements are linked to each other. The quantifier is
 	// phrased over pairs of indices (guarded by k == i+1) so that its body
 	// introduces no new seq-index terms, which would otherwise let the
 	// solver chain instantiations along the sequence.
-	(forall i, k int :: {es[i], es[k]} 0 <= i && k == i+1 && k < len(es) ==> (
-		es[i].next == es[k] && es[k].prev == es[i]))
+	(forall i, k int :: {l.es[i], l.es[k]} 0 <= i && k == i+1 && k < len(l.es) ==> (
+		l.es[i].next == l.es[k] && l.es[k].prev == l.es[i]))
+}
+
+// Es returns the elements of l, in list order.
+ghost
+requires l.Mem()
+decreases
+pure func (l *List) Es() seq[*Element] {
+	return unfolding l.Mem() in l.es
+}
+
+// Vs returns the values stored in the elements of l, in list order. Its
+// postcondition exports the length relation with Es, which is otherwise
+// hidden inside the folded predicate and is needed to show that contracts
+// indexing into Vs are well-formed.
+ghost
+requires l.Mem()
+ensures  len(res) == len(l.Es())
+decreases
+pure func (l *List) Vs() (res seq[any]) {
+	return unfolding l.Mem() in l.vs
+}
+
+// Ini reports whether the sentinel ring of l has been initialized, by Init or
+// by lazyInit. It tells the zero List value apart from an initialized empty
+// list; both have empty Es() and Vs().
+ghost
+requires l.Mem()
+decreases
+pure func (l *List) Ini() bool {
+	return unfolding l.Mem() in l.ini
 }
 
 // MoveSeq returns the result of moving the element at index i of es to just

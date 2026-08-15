@@ -12,11 +12,10 @@
 
 package list
 
-requires l.Mem(ges, vs, ini)
-requires len(ges) == len(vs)
-requires n == len(ges)
-ensures  l.Mem(ges, vs, ini)
-ensures  res
+preserves l.Mem(ges, vs, ini)
+requires  len(ges) == len(vs)
+requires  n == len(ges)
+ensures   res
 decreases
 func checkListLen(l *List, n int, ghost ges seq[*Element], ghost vs seq[any], ghost ini bool) (res bool) {
 	if v := l.Len(ges, vs, ini); v != n {
@@ -26,13 +25,11 @@ func checkListLen(l *List, n int, ghost ges seq[*Element], ghost vs seq[any], gh
 	return true
 }
 
-requires acc(es)
-requires l.Mem(ges, vs, true)
-requires len(ges) == len(vs)
-requires len(es) == len(ges)
-requires forall k int :: {&es[k]} 0 <= k && k < len(es) ==> es[k] == ges[k]
-ensures  acc(es)
-ensures  l.Mem(ges, vs, true)
+preserves acc(es)
+preserves l.Mem(ges, vs, true)
+requires  len(ges) == len(vs)
+requires  len(es) == len(ges)
+requires  forall k int :: {&es[k]} 0 <= k && k < len(es) ==> es[k] == ges[k]
 decreases
 func checkListPointers(l *List, es []*Element, ghost ges seq[*Element], ghost vs seq[any]) {
 	root := &l.root
@@ -238,13 +235,11 @@ func testListIterate(l *List, e1, e3, e4 *Element) {
 	checkListPointers(l, []*Element{}, seq[*Element]{}, seq[any]{})
 }
 
-requires acc(es)
-requires l.Mem(ges, vs, true)
-requires len(ges) == len(vs)
-requires len(es) == len(ges)
-requires forall k int :: {&es[k]} 0 <= k && k < len(es) ==> es[k] === vs[k]
-ensures  acc(es)
-ensures  l.Mem(ges, vs, true)
+preserves acc(es)
+preserves l.Mem(ges, vs, true)
+requires  len(ges) == len(vs)
+requires  len(es) == len(ges)
+requires  forall k int :: {&es[k]} 0 <= k && k < len(es) ==> es[k] === vs[k]
 decreases
 func checkList(l *List, es []any, ghost ges seq[*Element], ghost vs seq[any]) {
 	if !checkListLen(l, len(es), ges, vs, true) {

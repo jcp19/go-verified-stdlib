@@ -16,11 +16,9 @@ package list
 // mark of another need this lemma to discharge the mode dispatch of the
 // contract.
 ghost
-requires a.Mem(aes, avs, aini)
-requires b.Mem(bes, bvs, bini)
-ensures  a.Mem(aes, avs, aini)
-ensures  b.Mem(bes, bvs, bini)
-ensures  a != b && a != nil && b != nil
+preserves a.Mem(aes, avs, aini)
+preserves b.Mem(bes, bvs, bini)
+ensures   a != b && a != nil && b != nil
 decreases
 func DistinctLists(a, b *List, aes seq[*Element], avs seq[any], aini, bini bool, bes seq[*Element], bvs seq[any]) {
 	unfold a.Mem(aes, avs, aini)

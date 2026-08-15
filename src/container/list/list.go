@@ -34,12 +34,12 @@ type Element struct {
 // The ghost parameters describe where e currently lives: if l is non-nil,
 // e is the element at index i of list l; if l is nil, e is detached (it does
 // not belong to any list) and the caller owns it.
-// @ requires l != nil ==> l.Mem(es, vs, true) && 0 <= i && i < len(es) && es[i] == e
-// @ requires l == nil ==> acc(e) && e.list == nil
-// @ ensures  l != nil ==> l.Mem(es, vs, true)
-// @ ensures  l != nil && i < len(es)-1 ==> ret == es[i+1] && ret != nil
-// @ ensures  l != nil && i == len(es)-1 ==> ret == nil
-// @ ensures  l == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
+// @ preserves l != nil ==> l.Mem(es, vs, true)
+// @ preserves l == nil ==> acc(e) && e.list == nil
+// @ requires  l != nil ==> 0 <= i && i < len(es) && es[i] == e
+// @ ensures   l != nil && i < len(es)-1 ==> ret == es[i+1] && ret != nil
+// @ ensures   l != nil && i == len(es)-1 ==> ret == nil
+// @ ensures   l == nil ==> e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
 // @ decreases
 func (e *Element) Next( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[any], ghost i int @*/ ) (ret *Element) {
 	//@ ghost if l != nil { unfold l.Mem(es, vs, true) }
@@ -55,12 +55,12 @@ func (e *Element) Next( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[
 // Prev returns the previous list element or nil.
 //
 // The ghost parameters play the same role as in Next.
-// @ requires l != nil ==> l.Mem(es, vs, true) && 0 <= i && i < len(es) && es[i] == e
-// @ requires l == nil ==> acc(e) && e.list == nil
-// @ ensures  l != nil ==> l.Mem(es, vs, true)
-// @ ensures  l != nil && i > 0 ==> ret == es[i-1] && ret != nil
-// @ ensures  l != nil && i == 0 ==> ret == nil
-// @ ensures  l == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
+// @ preserves l != nil ==> l.Mem(es, vs, true)
+// @ preserves l == nil ==> acc(e) && e.list == nil
+// @ requires  l != nil ==> 0 <= i && i < len(es) && es[i] == e
+// @ ensures   l != nil && i > 0 ==> ret == es[i-1] && ret != nil
+// @ ensures   l != nil && i == 0 ==> ret == nil
+// @ ensures   l == nil ==> e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
 // @ decreases
 func (e *Element) Prev( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[any], ghost i int @*/ ) (ret *Element) {
 	//@ ghost if l != nil { unfold l.Mem(es, vs, true) }
@@ -106,17 +106,16 @@ func New() (ret *List) {
 
 // Len returns the number of elements of list l.
 // The complexity is O(1).
-// @ requires acc(l.Mem(es, vs, ini), _)
+// @ requires l.Mem(es, vs, ini)
 // @ ensures  res == len(es)
 // @ decreases
 // @ pure
 func (l *List) Len( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/ ) (res int) {
-	return /*@ unfolding acc(l.Mem(es, vs, ini), _) in @*/ l.length
+	return /*@ unfolding l.Mem(es, vs, ini) in @*/ l.length
 }
 
 // Front returns the first element of list l or nil if the list is empty.
-// @ requires l.Mem(es, vs, ini)
-// @ ensures  l.Mem(es, vs, ini)
+// @ preserves l.Mem(es, vs, ini)
 // @ ensures  len(es) > 0 ==> ret == es[0] && ret != nil
 // @ ensures  len(es) == 0 ==> ret == nil
 // @ decreases
@@ -132,8 +131,7 @@ func (l *List) Front( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini b
 }
 
 // Back returns the last element of list l or nil if the list is empty.
-// @ requires l.Mem(es, vs, ini)
-// @ ensures  l.Mem(es, vs, ini)
+// @ preserves l.Mem(es, vs, ini)
 // @ ensures  len(es) > 0 ==> ret == es[len(es)-1] && ret != nil
 // @ ensures  len(es) == 0 ==> ret == nil
 // @ decreases
@@ -249,7 +247,7 @@ func (l *List) remove(e *Element /*@ , ghost es seq[*Element], ghost vs seq[any]
 // @ requires 0 <= i && i < len(es) && es[i] == e
 // @ requires -1 <= j && j < len(es)
 // @ requires at == (j == -1 ? &l.root : es[j])
-// @ ensures  l.Mem(moveSeq(es, i, j), moveSeqV(vs, i, j), true)
+// @ ensures  l.Mem(MoveSeq(es, i, j), MoveSeqV(vs, i, j), true)
 // @ decreases
 func (l *List) move(e, at *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost i int, ghost j int @*/) {
 	//@ unfold l.Mem(es, vs, true)
@@ -276,8 +274,8 @@ func (l *List) move(e, at *Element /*@ , ghost es seq[*Element], ghost vs seq[an
 	e.next = at.next
 	e.prev.next = e
 	e.next.prev = e
-	//@ ghost var es2 seq[*Element] = moveSeq(es, i, j)
-	//@ ghost var vs2 seq[any] = moveSeqV(vs, i, j)
+	//@ ghost var es2 seq[*Element] = MoveSeq(es, i, j)
+	//@ ghost var vs2 seq[any] = MoveSeqV(vs, i, j)
 	//@ assert len(es2) == len(es) && len(vs2) == len(vs)
 	/*@
 	ghost if j < i {
@@ -417,7 +415,7 @@ func (l *List) InsertAfter(v any, mark *Element /*@ , ghost ml *List, ghost es s
 // @ requires el == l ==> 0 <= i && i < len(es) && es[i] == e
 // @ requires el != l && el != nil ==> el.Mem(ees, evs, true) && 0 <= i && i < len(ees) && ees[i] == e
 // @ requires el == nil ==> acc(e) && e.list == nil
-// @ ensures  el == l ==> l.Mem(moveSeq(es, i, -1), moveSeqV(vs, i, -1), true)
+// @ ensures  el == l ==> l.Mem(MoveSeq(es, i, -1), MoveSeqV(vs, i, -1), true)
 // @ ensures  el != l ==> l.Mem(es, vs, ini)
 // @ ensures  el != l && el != nil ==> el.Mem(ees, evs, true)
 // @ ensures  el == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value)
@@ -446,7 +444,7 @@ func (l *List) MoveToFront(e *Element /*@ , ghost el *List, ghost es seq[*Elemen
 // @ requires el == l ==> 0 <= i && i < len(es) && es[i] == e
 // @ requires el != l && el != nil ==> el.Mem(ees, evs, true) && 0 <= i && i < len(ees) && ees[i] == e
 // @ requires el == nil ==> acc(e) && e.list == nil
-// @ ensures  el == l ==> l.Mem(moveSeq(es, i, len(es)-1), moveSeqV(vs, i, len(vs)-1), true)
+// @ ensures  el == l ==> l.Mem(MoveSeq(es, i, len(es)-1), MoveSeqV(vs, i, len(vs)-1), true)
 // @ ensures  el != l ==> l.Mem(es, vs, ini)
 // @ ensures  el != l && el != nil ==> el.Mem(ees, evs, true)
 // @ ensures  el == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value)
@@ -478,7 +476,7 @@ func (l *List) MoveToBack(e *Element /*@ , ghost el *List, ghost es seq[*Element
 // @ requires ml == l ==> 0 <= m && m < len(es) && es[m] == mark
 // @ requires ml != l && ml != nil ==> ml.Mem(mes, mvs, true) && 0 <= m && m < len(mes) && mes[m] == mark
 // @ requires ml == nil ==> acc(mark) && mark.list == nil
-// @ ensures  ml == l && i != m ==> l.Mem(moveSeq(es, i, m-1), moveSeqV(vs, i, m-1), true)
+// @ ensures  ml == l && i != m ==> l.Mem(MoveSeq(es, i, m-1), MoveSeqV(vs, i, m-1), true)
 // @ ensures  ml == l && i == m ==> l.Mem(es, vs, ini)
 // @ ensures  ml != l ==> l.Mem(es, vs, ini)
 // @ ensures  ml != l && ml != nil ==> ml.Mem(mes, mvs, true)
@@ -511,7 +509,7 @@ func (l *List) MoveBefore(e, mark *Element /*@ , ghost ml *List, ghost es seq[*E
 // @ requires ml == l ==> 0 <= m && m < len(es) && es[m] == mark
 // @ requires ml != l && ml != nil ==> ml.Mem(mes, mvs, true) && 0 <= m && m < len(mes) && mes[m] == mark
 // @ requires ml == nil ==> acc(mark) && mark.list == nil
-// @ ensures  ml == l && i != m ==> l.Mem(moveSeq(es, i, m), moveSeqV(vs, i, m), true)
+// @ ensures  ml == l && i != m ==> l.Mem(MoveSeq(es, i, m), MoveSeqV(vs, i, m), true)
 // @ ensures  ml == l && i == m ==> l.Mem(es, vs, ini)
 // @ ensures  ml != l ==> l.Mem(es, vs, ini)
 // @ ensures  ml != l && ml != nil ==> ml.Mem(mes, mvs, true)
@@ -563,7 +561,7 @@ func (l *List) PushBackList(other *List /*@ , ghost es seq[*Element], ghost vs s
 		at := l.root.prev
 		//@ fold l.Mem(es ++ nes, vs ++ ovs[:len(oes)-i], true)
 		ne := l.insertValue(v, at /*@ , es ++ nes, vs ++ ovs[:len(oes)-i], len(es ++ nes)-1 @*/)
-		_ = ne
+		_ = ne // ne is only read from ghost code below; keep Go's compiler happy
 		//@ nes = nes ++ seq[*Element]{ne}
 	}
 }
@@ -599,7 +597,7 @@ func (l *List) PushFrontList(other *List /*@ , ghost es seq[*Element], ghost vs 
 		//@ ghost if other != l { fold other.Mem(oes, ovs, oini) }
 		//@ ghost if other == l { fold l.Mem(nes ++ es, ovs[i:] ++ vs, true) }
 		ne := l.insertValue(v, &l.root /*@ , nes ++ es, ovs[i:] ++ vs, -1 @*/)
-		_ = ne
+		_ = ne // ne is only read from ghost code below; keep Go's compiler happy
 		//@ nes = seq[*Element]{ne} ++ nes
 		//@ assert len(nes) > 0 && (nes ++ es)[0] == ne && ne != nil
 	}

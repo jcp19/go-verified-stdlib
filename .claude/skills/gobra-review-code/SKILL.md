@@ -230,51 +230,81 @@ Three things a `write` precondition takes away from callers:
 
 #### How to spot it
 
-Flag a non-pure function when *all* of these hold:
+Flag a non-pure function when both of these hold:
 
 - the contract takes `write` (`acc(x)`, `acc(x, write)`, `acc(x, 1)`, or a bare `x.Mem()`),
 - the body assigns to nothing reachable through that parameter — no `*p = …`, no `p.f = …`,
-  no `s[i] = …`, no `append`/`copy` into it — and calls nothing that demands write, and
-- the contract is a `preserves`-shaped pair with no postcondition claiming a change.
+  no `s[i] = …`, no `append`/`copy` into it — and calls nothing that demands write.
 
 Getters, `Len`, `Peek`, `Contains`, `String`, `Equals`, `Validate` and marshalling routines
-are the usual suspects. Two cases look like findings but are not: a method whose contract is
-fixed by an interface that demands write, and a "read-only" method that hands the caller a
-pointer *into* the structure to write through later.
+are the usual suspects.
 
-#### The fix: one shared `perm` constant for the whole project
+#### The fix: a read-permission constant per package
 
-The fix is *not* to sprinkle `1/2` and `1/4` across contracts. Ad-hoc fractions do not
-compose: as soon as one read-only function calls another, the amounts have to be split and
-lined up by hand. Declare one constant and let every contract that means "read" use it —
-then read-only functions call each other by passing the amount straight through, with no
-permission arithmetic anywhere.
+The fix is *not* to sprinkle `1/2` and `1/4` across contracts, unless in contracts of private
+functions when need be. Ad-hoc fractions do not compose: as soon as one read-only function
+calls another, the amounts have to be split and lined up by hand. Give the package one
+constant instead, and let every public contract that means "read" use it — read-only
+functions then pass the amount straight through to each other, with no permission arithmetic
+in sight.
 
 ```gobra
-// gobra/perms/spec.gobra
+// mypkg/spec.gobra — ghost definitions of the package live here (§8)
 
 // Enables Gobra in the current file.
 // +gobra
 
-package perms
+package mypkg
 
-// R is the permission amount public contracts use to stand for read-only access.
-// The exact value carries no meaning; it only has to be positive and small enough
-// that any realistic holder can spare it and still keep a positive remainder.
+// R is the permission amount this package's public contracts use to stand for
+// read-only access. It has to be positive, small enough that any realistic holder
+// can spare it, and larger than the R of the packages this one calls into.
 ghost const R perm = 1/1000
 ```
 
 `perm` is Gobra's type of permission amounts, and a package-level `perm` constant is
 ordinary Gobra — `const p perm = 1/4` appears in Gobra's own regression suite, and the bare
 `const` form is equally accepted here since `perm` is already a ghost type. Being an
-exported constant, `perms.R` is nameable by clients, as §2 requires of anything appearing in
-a public contract. Two mechanical points:
+exported constant, `R` is nameable by clients, as §2 requires of anything appearing in a
+public contract. Two mechanical points:
 
 - **Do not name the package `perm`.** The import would shadow Gobra's predeclared `perm`
-  type in every file that uses it. `perms`, or a project-wide ghost package, is fine.
+  type in every file that uses it. `perms` is fine.
 - **Keep the value a single literal fraction.** Nested arithmetic falls back to integer
   semantics — `perm((1/2)/1)` is `0`, not `1/2` — and a constant that is silently `noPerm`
   produces a baffling "permission might not suffice" on the *body*, not on the constant.
+
+#### One constant per package, not one per project
+
+A caller that hands away *everything* it holds for a location cannot frame that location
+across the call: it holds nothing while the callee runs, so on return the value is unknown
+unless the callee's postcondition pins it down. A single project-wide amount walks straight
+into this, because caller and callee then ask for exactly the same fraction:
+
+```go
+import "pkg"
+
+type T struct {
+	name pkg.Name
+	// … other fields
+}
+
+// requires acc(t, R)
+func (t *T) GetName() (res string) {
+	return t.name.ToString()   // also requires acc(&t.name, R) — takes the whole share
+}
+```
+
+`GetName` holds exactly `R` of `&t.name`, gives all of it away, and can no longer prove that
+`t.name` did not change. It costs nothing in a one-line body like this one, but it bites as
+soon as the function reads state around the call.
+
+So each package declares its own `R` and picks a value **larger than the `R` of every package
+it calls into** — the deeper a package sits, the smaller its fraction. Callers then always
+retain a positive remainder and frame for free. The same trap exists between two read-only
+functions *within* a package: the usual way out is to make the inner one `pure`, since a pure
+function never takes permission away (§4.2), and the fallback is the `ghost p perm` parameter
+below.
 
 At the use site:
 
@@ -287,17 +317,18 @@ ensures  l.View() == old(l.View())   // only needed because the caller gave up e
 func (l *List) Len() (res int)
 
 // ✓ — the caller keeps a share, so "nothing moved" needs no stating
-preserves acc(l.Mem(), perms.R)
+preserves acc(l.Mem(), R)
 ensures   res == len(l.View())
 func (l *List) Len() (res int)
 ```
 
-From a `.go` file the ghost package is imported in an annotation, `//@ import "…/gobra/perms"`,
-so the file stays compilable Go (§3).
+A client in another package writes `acc(l.Mem(), list.R)`. If it names that package only from
+annotations, the import goes in an annotation too — `//@ import "…/list"` — so the `.go` file
+stays compilable Go (§3).
 
 **Be honest about what the rewrite costs.** The amount multiplies through the predicate
 body, so every `fold`, `unfold` and `unfolding` in the function has to carry it —
-`unfold acc(l.Mem(), perms.R)` yields `acc(&l.head, perms.R)`, not `acc(&l.head)`, and the
+`unfold acc(l.Mem(), R)` yields `acc(&l.head, R)`, not `acc(&l.head)`, and the
 proof below it may need the same treatment. That is a real diff, so propose it when the
 function is genuinely read-only and part of an API, and skip it for a package-private helper
 with one caller.
@@ -319,8 +350,8 @@ func client() {
 }
 ```
 
-With `perms.R` this works: a caller holding `write` gives away `R`, gets `R` back, and holds
-`write` again.
+With a named constant this works: a caller holding `write` gives away `R`, gets `R` back, and
+holds `write` again.
 
 #### When the constant is not enough
 
@@ -334,9 +365,9 @@ preserves acc(l.Mem(), p)
 func (l *List) Get(i int, ghost p perm) (res int)
 ```
 
-- **Splitting a read share further** — a function that holds `acc(x, perms.R)` and fans out
-  to goroutines that each need their own share. Each would need `R/2`, which no fixed
-  constant names.
+- **Splitting a read share further** — a function that holds `acc(x, R)` and fans out to
+  goroutines that each need their own share. Each would need `R/2`, which no fixed constant
+  names.
 - **Amount-polymorphic APIs** — a wrapper or callback that must return exactly the caller's
   amount, when that amount is chosen elsewhere and is not `R`.
 
@@ -344,7 +375,7 @@ Everything else — the ordinary sequential read-only method — is served by th
 that is the version worth suggesting in review.
 
 Finally, this check does not reopen §4.2: in a **pure** function the amount is meaningless,
-so plain `acc(x)` stays correct there, and `perms.R` does not belong in its contract.
+so plain `acc(x)` stays correct there, and `R` does not belong in its contract.
 
 ## 5. Prefer `integer` in specifications
 

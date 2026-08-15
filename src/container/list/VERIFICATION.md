@@ -66,18 +66,26 @@ for clients that need to tell two lists apart.
   name the neighbors of the affected elements and give the element-wise
   mapping between old and new sequences.
 - The two `Push*List` loops track the position of the element being copied
-  **per mode**, and this is what makes them tractable. Against a separate
-  list the position is an index into that list's own unchanging sequence.
-  Against `l` itself, relating `l.Es()` back to the captured `oes0` by a
-  sequence-suffix invariant made `PushFrontList` diverge; tracking the
-  position purely inside `l` instead lets `Next`/`Prev`'s own postcondition
-  re-establish it, and the proof completes in seconds. `PushFrontList`
-  prepends, so the ghost index handed to `Prev` in the loop post-statement
-  accounts for the one-position shift; `PushBackList` appends and needs no
-  shift.
-- The price of that simplification is that `Push*List` no longer promise
-  that the previously present elements keep their identity and order; the
-  postconditions state the value sequence only.
+  **per mode**. Against a separate list the position is an index into that
+  list's own unchanging sequence; against `l` itself the position is tracked
+  purely inside `l`, where `Next`/`Prev`'s own postcondition re-establishes
+  it. Relating `l.Es()` back to the captured `oes0` instead — by a
+  sequence-suffix invariant — made `PushFrontList` diverge.
+- Pin the elements already in `l` with a **full-sequence equality against a
+  ghost accumulator**, not with a slice of `l.Es()`:
+
+  ```go
+  //@ invariant l.Es() == es0 ++ nes && len(nes) == len(oes0) - i   // cheap
+  //@ invariant l.Es()[:len(es0)] == es0                            // diverges
+  ```
+
+  The accumulator form is both stronger (it names the new elements, which
+  the methods return as a ghost result) and markedly cheaper: it avoids
+  Silicon's sequence-drop axioms. Swapping to it took the whole package from
+  a member that would not terminate to a 3m41s run.
+- `PushFrontList` prepends, so the ghost index handed to `Prev` in the loop
+  post-statement accounts for the one-position shift each round;
+  `PushBackList` appends and needs no shift.
 
 ## Changes to the original Go code
 
@@ -119,5 +127,6 @@ accepts that spelling, so the file passes both tools.
 java -jar gobra.jar --config <repo>/src/container/list
 ```
 
-(Requires Z3 on `Z3_EXE`.) The most expensive members are the two
-`Push*List` loops and `move`, whose proofs cross-case over element positions.
+(Requires Z3 on `Z3_EXE`.) The whole package verifies in under four minutes
+on 4 cores. The most expensive members are the two `Push*List` loops and
+`move`, whose proofs cross-case over element positions.

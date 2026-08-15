@@ -187,11 +187,10 @@ func (l *List) lazyInit() {
 // The ghost index j identifies at: j == -1 stands for the sentinel &l.root,
 // and 0 <= j < len(l.Es()) stands for l.Es()[j].
 // @ preserves l.Mem()
-// @ requires  l.Ini()
+// @ preserves l.Ini()
 // @ requires  acc(e) && e.list == nil
 // @ requires  -1 <= j && j < len(l.Es())
 // @ requires  at == (j == -1 ? &l.root : l.Es()[j])
-// @ ensures   l.Ini()
 // @ ensures   l.Es() == old(l.Es())[:j+1] ++ seq[*Element]{e} ++ old(l.Es())[j+1:]
 // @ ensures   l.Vs() == old(l.Vs())[:j+1] ++ seq[any]{old(e.Value)} ++ old(l.Vs())[j+1:]
 // @ ensures   ret == e && ret != nil
@@ -231,10 +230,9 @@ func (l *List) insert(e, at *Element /*@ , ghost j int @*/) (ret *Element) {
 
 // insertValue is a convenience wrapper for insert(&Element{Value: v}, at).
 // @ preserves l.Mem()
-// @ requires  l.Ini()
+// @ preserves l.Ini()
 // @ requires  -1 <= j && j < len(l.Es())
 // @ requires  at == (j == -1 ? &l.root : l.Es()[j])
-// @ ensures   l.Ini()
 // @ ensures   l.Es() == old(l.Es())[:j+1] ++ seq[*Element]{ret} ++ old(l.Es())[j+1:]
 // @ ensures   l.Vs() == old(l.Vs())[:j+1] ++ seq[any]{v} ++ old(l.Vs())[j+1:]
 // @ ensures   ret != nil
@@ -348,6 +346,7 @@ func (l *List) move(e, at *Element /*@ , ghost i int, ghost j int @*/) {
 // @ requires  el == l ==> 0 <= i && i < len(l.Es()) && l.Es()[i] == e
 // @ requires  el != l && el != nil ==> el.Mem() && 0 <= i && i < len(el.Es()) && el.Es()[i] == e
 // @ requires  el == nil ==> acc(e) && e.list == nil
+// @ ensures   el == l ==> l.Ini()
 // @ ensures   el == l ==> l.Es() == old(l.Es())[:i] ++ old(l.Es())[i+1:]
 // @ ensures   el == l ==> l.Vs() == old(l.Vs())[:i] ++ old(l.Vs())[i+1:]
 // @ ensures   el == l ==> acc(e) && e.list == nil && e.next == nil && e.prev == nil && e.Value === old(l.Vs())[i] && ret === old(l.Vs())[i]
@@ -602,9 +601,10 @@ func (l *List) MoveAfter(e, mark *Element /*@ , ghost ml *List, ghost i int, gho
 // @ requires  other != l ==> other.Mem()
 // @ ensures   l.Ini()
 // @ ensures   l.Vs() == old(l.Vs()) ++ old(other.Vs())
+// @ ensures   l.Es() == old(l.Es()) ++ nes && len(nes) == len(old(other.Es()))
 // @ ensures   other != l ==> other.Mem() && other.Es() == old(other.Es()) && other.Vs() == old(other.Vs())
 // @ decreases
-func (l *List) PushBackList(other *List) {
+func (l *List) PushBackList(other *List) /*@ (ghost nes seq[*Element]) @*/ {
 	//@ ghost var es0 seq[*Element] = l.Es()
 	//@ ghost var vs0 seq[any] = l.Vs()
 	//@ ghost var oes0 seq[*Element] = other.Es()
@@ -618,7 +618,9 @@ func (l *List) PushBackList(other *List) {
 	//@ invariant l.Mem() && l.Ini()
 	//@ invariant other != l ==> other.Mem() && other.Es() == oes0 && other.Vs() == ovs0
 	//@ invariant l.Vs() == vs0 ++ ovs0[:len(oes0)-i]
-	//@ invariant len(l.Es()) == len(es0) + len(oes0) - i
+	// the new elements are accumulated in nes, so the elements already in l
+	// are pinned by a full-sequence equality rather than by slicing l.Es()
+	//@ invariant l.Es() == es0 ++ nes && len(nes) == len(oes0) - i
 	// The position of the element being copied is tracked differently per
 	// mode. Against a separate list it is an index into that list's own
 	// (unchanging) sequence. Against l itself, appending at the back never
@@ -639,7 +641,9 @@ func (l *List) PushBackList(other *List) {
 		at := l.root.prev
 		//@ ghost var n int = len(l.es)
 		//@ fold l.Mem()
-		l.insertValue(v, at /*@ , n-1 @*/)
+		ne := l.insertValue(v, at /*@ , n-1 @*/)
+		_ = ne // ne is only read from ghost code below; keep Go's compiler happy
+		//@ nes = nes ++ seq[*Element]{ne}
 	}
 }
 
@@ -649,9 +653,10 @@ func (l *List) PushBackList(other *List) {
 // @ requires  other != l ==> other.Mem()
 // @ ensures   l.Ini()
 // @ ensures   l.Vs() == old(other.Vs()) ++ old(l.Vs())
+// @ ensures   l.Es() == nes ++ old(l.Es()) && len(nes) == len(old(other.Es()))
 // @ ensures   other != l ==> other.Mem() && other.Es() == old(other.Es()) && other.Vs() == old(other.Vs())
 // @ decreases
-func (l *List) PushFrontList(other *List) {
+func (l *List) PushFrontList(other *List) /*@ (ghost nes seq[*Element]) @*/ {
 	//@ ghost var es0 seq[*Element] = l.Es()
 	//@ ghost var vs0 seq[any] = l.Vs()
 	//@ ghost var oes0 seq[*Element] = other.Es()
@@ -665,7 +670,8 @@ func (l *List) PushFrontList(other *List) {
 	//@ invariant l.Mem() && l.Ini()
 	//@ invariant other != l ==> other.Mem() && other.Es() == oes0 && other.Vs() == ovs0
 	//@ invariant l.Vs() == ovs0[i:] ++ vs0
-	//@ invariant len(l.Es()) == len(es0) + len(oes0) - i
+	// as in PushBackList, a full-sequence equality against the accumulator
+	//@ invariant l.Es() == nes ++ es0 && len(nes) == len(oes0) - i
 	// As in PushBackList, the position is tracked per mode. Against l
 	// itself each round prepends one element, so the element being copied
 	// sits at the fixed index len(oes0)-1 of l: the body pushes it to
@@ -682,7 +688,9 @@ func (l *List) PushFrontList(other *List) {
 		//@ ghost if other == l { fold l.Mem() }
 		//@ ghost if other == l { assert l.Vs()[len(oes0)-1] === ovs0[i-1] }
 		//@ assert v === ovs0[i-1]
-		l.insertValue(v, &l.root /*@ , -1 @*/)
+		ne := l.insertValue(v, &l.root /*@ , -1 @*/)
+		_ = ne // ne is only read from ghost code below; keep Go's compiler happy
+		//@ nes = seq[*Element]{ne} ++ nes
 		// the insertion prepended one element, so when other is l the index
 		// of e inside l shifted up by one
 		//@ assert other == l ==> len(oes0) < len(l.Es()) && l.Es()[len(oes0)] == e

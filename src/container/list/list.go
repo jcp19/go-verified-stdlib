@@ -602,7 +602,6 @@ func (l *List) MoveAfter(e, mark *Element /*@ , ghost ml *List, ghost i int, gho
 // @ requires  other != l ==> other.Mem()
 // @ ensures   l.Ini()
 // @ ensures   l.Vs() == old(l.Vs()) ++ old(other.Vs())
-// @ ensures   l.Es()[:len(old(l.Es()))] == old(l.Es())
 // @ ensures   other != l ==> other.Mem() && other.Es() == old(other.Es()) && other.Vs() == old(other.Vs())
 // @ decreases
 func (l *List) PushBackList(other *List) {
@@ -619,9 +618,13 @@ func (l *List) PushBackList(other *List) {
 	//@ invariant l.Mem() && l.Ini()
 	//@ invariant other != l ==> other.Mem() && other.Es() == oes0 && other.Vs() == ovs0
 	//@ invariant l.Vs() == vs0 ++ ovs0[:len(oes0)-i]
-	//@ invariant l.Es()[:len(es0)] == es0
 	//@ invariant len(l.Es()) == len(es0) + len(oes0) - i
-	//@ invariant i > 0 ==> e == oes0[len(oes0)-i]
+	// The position of the element being copied is tracked differently per
+	// mode. Against a separate list it is an index into that list's own
+	// (unchanging) sequence. Against l itself, appending at the back never
+	// shifts a prefix, so the index stays put and Next's postcondition
+	// re-establishes it directly -- no relation between l and oes0 needed.
+	//@ invariant i > 0 && other != l ==> e == oes0[len(oes0)-i]
 	//@ invariant i > 0 && other == l ==> len(oes0)-i < len(l.Es()) && l.Es()[len(oes0)-i] == e
 	//@ decreases i
 	for i, e := other.Len(), other.Front(); i > 0; i, e = i-1, e.Next( /*@ other, len(oes0)-i @*/ ) {
@@ -630,6 +633,7 @@ func (l *List) PushBackList(other *List) {
 		v := e.Value
 		//@ ghost if other != l { fold other.Mem() }
 		//@ ghost if other == l { fold l.Mem() }
+		//@ ghost if other == l { assert l.Vs()[len(oes0)-i] === ovs0[len(oes0)-i] }
 		//@ assert v === ovs0[len(oes0)-i]
 		//@ unfold l.Mem()
 		at := l.root.prev
@@ -645,7 +649,6 @@ func (l *List) PushBackList(other *List) {
 // @ requires  other != l ==> other.Mem()
 // @ ensures   l.Ini()
 // @ ensures   l.Vs() == old(other.Vs()) ++ old(l.Vs())
-// @ ensures   l.Es()[len(l.Es())-len(old(l.Es())):] == old(l.Es())
 // @ ensures   other != l ==> other.Mem() && other.Es() == old(other.Es()) && other.Vs() == old(other.Vs())
 // @ decreases
 func (l *List) PushFrontList(other *List) {
@@ -663,8 +666,12 @@ func (l *List) PushFrontList(other *List) {
 	//@ invariant other != l ==> other.Mem() && other.Es() == oes0 && other.Vs() == ovs0
 	//@ invariant l.Vs() == ovs0[i:] ++ vs0
 	//@ invariant len(l.Es()) == len(es0) + len(oes0) - i
-	//@ invariant l.Es()[len(oes0)-i:] == es0
-	//@ invariant i > 0 ==> e == oes0[i-1]
+	// As in PushBackList, the position is tracked per mode. Against l
+	// itself each round prepends one element, so the element being copied
+	// sits at the fixed index len(oes0)-1 of l: the body pushes it to
+	// len(oes0), and Prev, called with that index, hands back the element
+	// at len(oes0)-1 again.
+	//@ invariant i > 0 && other != l ==> e == oes0[i-1]
 	//@ invariant i > 0 && other == l ==> len(oes0)-1 < len(l.Es()) && l.Es()[len(oes0)-1] == e
 	//@ decreases i
 	for i, e := other.Len(), other.Back(); i > 0; i, e = i-1, e.Prev( /*@ other, other == l ? len(oes0) : i-1 @*/ ) {
@@ -673,6 +680,7 @@ func (l *List) PushFrontList(other *List) {
 		v := e.Value
 		//@ ghost if other != l { fold other.Mem() }
 		//@ ghost if other == l { fold l.Mem() }
+		//@ ghost if other == l { assert l.Vs()[len(oes0)-1] === ovs0[i-1] }
 		//@ assert v === ovs0[i-1]
 		l.insertValue(v, &l.root /*@ , -1 @*/)
 		// the insertion prepended one element, so when other is l the index

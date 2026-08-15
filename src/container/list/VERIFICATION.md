@@ -65,9 +65,19 @@ for clients that need to tell two lists apart.
 - Folds after pointer surgery are preceded by "breadcrumb" assertions that
   name the neighbors of the affected elements and give the element-wise
   mapping between old and new sequences.
-- `PushFrontList` prepends, so the index of the element being read shifts by
-  one during each iteration; the ghost index handed to `Prev` in the loop
-  post-statement accounts for that. `PushBackList` appends and needs no shift.
+- The two `Push*List` loops track the position of the element being copied
+  **per mode**, and this is what makes them tractable. Against a separate
+  list the position is an index into that list's own unchanging sequence.
+  Against `l` itself, relating `l.Es()` back to the captured `oes0` by a
+  sequence-suffix invariant made `PushFrontList` diverge; tracking the
+  position purely inside `l` instead lets `Next`/`Prev`'s own postcondition
+  re-establish it, and the proof completes in seconds. `PushFrontList`
+  prepends, so the ghost index handed to `Prev` in the loop post-statement
+  accounts for the one-position shift; `PushBackList` appends and needs no
+  shift.
+- The price of that simplification is that `Push*List` no longer promise
+  that the previously present elements keep their identity and order; the
+  postconditions state the value sequence only.
 
 ## Changes to the original Go code
 

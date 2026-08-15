@@ -197,7 +197,16 @@ func testListInsert(l *List, e1, e3, e4 *Element) {
 	checkListPointers(l, []*Element{e1, e4, e2, e3})
 	l.Remove(e2, l, 2)
 
-	e2 = l.InsertAfter(int(2), e1, l, 0) // insert after front
+	testListInsertAfter(l, e1, e3, e4)
+}
+
+// testListInsertAfter is the continuation of TestList.
+requires l != nil && l.Mem()
+requires l.Es() == seq[*Element]{e1, e4, e3}
+requires l.Vs() == seq[any]{int(1), string("banana"), int(3)}
+decreases
+func testListInsertAfter(l *List, e1, e3, e4 *Element) {
+	e2 := l.InsertAfter(int(2), e1, l, 0) // insert after front
 	checkListPointers(l, []*Element{e1, e2, e4, e3})
 	l.Remove(e2, l, 1)
 	e2 = l.InsertAfter(int(2), e4, l, 1) // insert after middle

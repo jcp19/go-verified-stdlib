@@ -227,6 +227,75 @@ instantiation. This is standard across verifiers, and the advice transfers:
 - **Avoid non-linear arithmetic** where you can; prove it in small steps in
   dedicated lemmas. `--disableNL` keeps it out of everything else.
 
+### 5b. Rewrite the specification, not just the proof
+
+The costliest thing in a slow member is often a modelling choice in the spec
+functions it mentions. These three rewrites are worth checking before any
+tuning flag, because each removes a whole class of terms from *every*
+obligation rather than shaving one query. On a Rabin-Karp search over byte
+slices they compounded to 42m → 10m41s with no change to the Go code.
+
+**Replace sequence slicing with a recursive range form.** A definition like
+
+```go
+pure func MatchesAt(q, pat seq[byte], j int) bool {
+	return q[j : j+len(pat)] == pat          // nested Seq_take/Seq_drop
+}
+```
+
+makes every obligation mentioning it expensive. The range form has no slicing
+and, being recursive rather than quantified, needs no trigger at all:
+
+```go
+pure func MatchesAtRange(q, pat seq[byte], j, k int) bool {
+	return k == 0 ? true : (q[j+k-1] == pat[k-1] && MatchesAtRange(q, pat, j, k-1))
+}
+opaque pure func MatchesAt(q, pat seq[byte], j int) bool {
+	return MatchesAtRange(q, pat, j, len(pat))
+}
+```
+
+Then give callers lemmas whose *contracts* are pointwise, so slicing never
+enters the caller's context. Both directions are needed in practice: one lemma
+from pointwise equality to the range form, and — for refutation, where a
+sequence disequality gives you no witness index — one taking the window
+sequence and closing by contradiction through extensionality.
+
+**State contracts in one heap.** Sequence equalities relating two heaps, as in
+`ensures seq(s) == old(seq(s))`, are a minefield: every obligation carries two
+parallel families of terms plus the bridge between them. When the callee only
+*reads* a buffer and the caller keeps a fraction of the permission across the
+call, the caller gets value stability from framing for free, so the clause is
+redundant — drop it and phrase every postcondition against the current state.
+Watch for contracts that are inconsistent about this (some clauses in `old`,
+some not); those pay the cost without anyone having decided to.
+
+Inside a loop this feels unsafe, because Viper havocs the values covered by the
+invariant's permissions and `acc(s, p)` alone does not pin them. It is fine as
+long as *every* fact is stated against the current heap: the invariant carries
+its facts relative to whatever the current heap is, the body reads from that
+same heap and re-establishes them there, and nothing ever compares two heaps.
+The framing conjunct is only load-bearing when other clauses are phrased in
+`old`.
+
+**Name arithmetic out of trigger patterns.** When `gobra-debug-perf` reports a
+trigger Silicon rejects, the cause is usually an interpreted operation in the
+pattern, and a ghost variable for the offending subterm fixes it without
+touching the Go code:
+
+```go
+//@ ghost lo := i - n
+//@ assert forall k int :: {&s[lo:i][k]} 0 <= k && k < n ==> &s[lo:i][k] == &s[lo+k]
+```
+
+`{&s[i-n:i][k]}` is invalid because the bound `i-n` is a subtraction inside the
+pattern; `{&s[lo:i][k]}` is legal, and `lo == i-n` links the two by congruence.
+Arithmetic in the quantifier *body* is unrestricted. The alternative idiom — a
+dummy pure function over the quantified variables, used as the trigger — is
+worth knowing, but prefer renaming when it applies: a helper only fires where
+you mention it, and the terms Silicon generates internally (e.g. `ShArrayloc`
+when computing permissions) will not mention it.
+
 ### 6. Borrowed wisdom from Dafny and Verus
 
 These verifiers hit the same wall and document the same cures — useful both as
@@ -266,6 +335,21 @@ instantiations. The mental model is identical.
 - **Chasing a member you haven't measured.** Slow *predicates* and small pure
   functions are frequently the real culprits behind a slow method, because their
   cost is paid at every unfold or call site.
+- **Adding assertions to "help" the solver.** When a step fails on a timeout
+  rather than on a missing fact, every intermediate assertion you add is one
+  more query against the same budget. Capturing a loop invariant in a ghost
+  variable before the induction variable moves — the textbook fix for "the
+  invariant is there but not in this form" — cost 36s on its own in one member
+  and pushed the run from 31m to a 50m timeout. Decomposition helps when the
+  solver lacks a fact; it hurts when the solver lacks *budget*, and
+  `gobra-debug-perf` tells you which.
+- **`reveal`ing an opaque function inside a hot loop.** Making a function
+  `opaque` and then revealing it at a call site in the loop body puts the
+  expensive definition straight back into the context that needed protecting —
+  in one case worse than never making it opaque (24m + an out-of-memory kill of
+  Z3, against 24m and a clean failure). Introduce the fact with a ghost lemma
+  instead, so the unfolding happens in the lemma's own small context and the
+  caller receives only its `ensures`.
 
 ## Reporting
 

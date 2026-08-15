@@ -245,6 +245,36 @@ in per-member stats. Diagnostic signal: `FunctionalCorrectness` dominating the
 time, and every hot query's source position containing a `[a:b]` expression.
 See `gobra-improve-perf` for the range-form rewrite.
 
+**Sequence slicing in a loop invariant.** The same hazard, one level up. An
+invariant that pins part of an abstraction with `s[:k]` or `s[k:]` makes every
+iteration re-derive the slice through those same take/drop axioms. Prefer a
+full-sequence equality against a ghost accumulator:
+
+```go
+//@ invariant l.Es() == es0 ++ nes && len(nes) == len(oes0) - i   // cheap
+//@ invariant l.Es()[:len(es0)] == es0                            // diverges
+```
+
+In `container/list` this one substitution took `PushFrontList` from "did not
+terminate" to a whole-package run of under four minutes — and the accumulator
+form is the *stronger* spec, since it names the new elements.
+
+**A quantifier body that mentions a neighbouring index.** In a linked
+structure it is natural to write the linkage as
+
+```go
+forall i int :: {es[i]} 0 <= i && i < len(es)-1 ==> es[i].next == es[i+1]
+```
+
+but the body introduces the fresh term `es[i+1]`, which matches the trigger
+again and lets Z3 chain instantiations along the whole sequence. Quantify over
+the pair instead, so the body introduces no new index term:
+
+```go
+forall i, k int :: {es[i], es[k]} 0 <= i && k == i+1 && k < len(es) ==>
+    es[i].next == es[k] && es[k].prev == es[i]
+```
+
 #### "Assert might fail" does not always mean the property is false
 
 Before treating a failing assertion as a proof gap, check for an
@@ -341,6 +371,20 @@ trigger in place.
   not guaranteed identical, but stripping does not by itself make the program
   slower. Strip freely to keep debugging; just fix the trigger in the source
   before drawing conclusions about that quantifier specifically.
+#### Isolated-fast, package-slow: what it does and does not mean
+
+A member that verifies under `-i file@line` but diverges in the package run is
+the most confusing case, so rule things out in this order — the first two are
+cheap and both were dead ends in `container/list`:
+
+1. **Context size** — re-run with `--chop N`. If chopping changes nothing, the
+   context is not reducible and the cost is the member's own.
+2. **CPU contention** — Silicon verifies members in parallel; on a small
+   machine a heavy member can simply be starved. Re-run with a much larger
+   `--packageTimeout`. If it still does not finish, it is not scheduling.
+3. **The member's own proof** — which is the usual answer. The slice/chopper
+   evidence is what licenses you to stop tuning flags and go rewrite the
+   invariant.
 
 ### 6. Get evidence at the Viper / Z3 level when needed
 

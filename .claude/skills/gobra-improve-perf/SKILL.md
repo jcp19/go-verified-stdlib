@@ -428,6 +428,36 @@ The Gobra analogue of "isolate assertions" is `-i file@line` plus `outline`;
 the analogue of `--profile` is a Silicon prover log analyzed for quantifier
 instantiations. The mental model is identical.
 
+### 7. Re-encode the invariant before tuning the backend
+
+The cheapest large win is often a different way of *saying* the same thing.
+Three re-encodings that repeatedly pay off, in rough order of value:
+
+**Accumulator instead of slice.** Pinning part of an abstraction with `s[:k]`
+or `s[k:]` in a loop invariant drags Silicon's sequence-take/drop axioms into
+every iteration. Track a ghost accumulator and state a full-sequence equality:
+
+```go
+//@ invariant l.Es() == es0 ++ nes && len(nes) == len(oes0) - i   // cheap
+//@ invariant l.Es()[:len(es0)] == es0                            // diverges
+```
+
+**Split the invariant by mode instead of relating two structures.** When a
+method can act on its receiver or on a separate object (`other == l` vs
+`other != l`), do not carry one invariant that relates the two abstractions.
+State each mode's fact in its own terms; each is then re-established directly
+by the callee's postcondition:
+
+```go
+//@ invariant i > 0 && other != l ==> e == oes0[i-1]                    // index into other
+//@ invariant i > 0 && other == l ==> l.Es()[len(oes0)-1] == e          // index into l
+```
+
+**Move heap-independent ghost work before the heap writes.** Sequence-shape
+assertions (`len`, index mappings) prove far more cheaply against the
+pre-mutation heap. Compute the new sequences and assert their shape, *then*
+do the pointer surgery, then `fold`.
+
 ## Things that don't work (don't rediscover them)
 
 - **Selecting heap algorithms per member before the member verifies.** You

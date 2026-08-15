@@ -525,6 +525,29 @@ that are not lemmas should be defined in the `spec.gobra` file. Lemmas should be
 (`lemmas.gobra`). Any trusted ghost member or member that, for some reason is not fully verified, should be
 in `assumptions.gobra`. This is a super strict check!!!!
 
+## 8b. Ghost state on a struct
+
+When a type carries its abstraction in ghost fields, the fields themselves stay
+private (like any other field) but the **getters are part of the API** and must
+be exported, along with every pure function a contract mentions:
+
+```go
+type List struct { /*@ ghost es seq[*Element] @*/ }  // private field: fine
+
+ghost requires l.Mem() decreases
+pure func (l *List) Es() seq[*Element] { … }         // must be exported: contracts use it
+```
+
+Two things to check on such a package:
+
+- **Read-only methods that forget "nothing changed".** `preserves l.Mem()` no
+  longer pins the abstraction, so a getter-based contract needs an explicit
+  `ensures l.Es() == old(l.Es()) && …`. Its absence is a real spec gap: a
+  client calling `Front()` loses everything it knew about the list.
+- **Relations sealed inside the predicate.** If contracts index into a derived
+  sequence, the getter should export what makes that well-formed —
+  `ensures len(res) == len(l.Es())` — rather than each caller re-proving it.
+
 ## 9. Recurring findings worth a second look
 
 These come up often enough in review to be worth scanning for, but they are judgement calls

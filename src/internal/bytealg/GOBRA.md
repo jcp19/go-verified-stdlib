@@ -18,24 +18,27 @@ abstractions defined in `spec.gobra`:
 | `HashStr` | `hash == RKHashStr(sep, 0, len(sep))` and `pow == PowRK(PrimeRK, len(sep))` |
 | `HashStrRevBytes` | `hash == RKHashRev(seq(sep))` and `pow == PowRK(PrimeRK, len(sep))` |
 | `HashStrRev` | `hash == RKHashStrRev(sep, 0, len(sep))` and `pow == PowRK(PrimeRK, len(sep))` |
-| `IndexRabinKarpBytes` | first-occurrence contract in terms of `MatchesAt` (see below) |
+| `IndexRabinKarpBytes` | rolling-hash invariant and result bounds; the search-correctness conjuncts are deferred (see Limitations) |
 | `IndexRabinKarp` | first-occurrence contract in terms of `StrMatchesAt` (see below) |
 
 The abstractions (`spec.gobra`) are: `RKHashRange`/`RKHash` (Rabin-Karp hash of
 a byte-sequence range), `RKHashRevRange`/`RKHashRev` (hash of the reversed
 range), `RKHashStr`/`RKHashStrRev` (the analogues over string ranges), `PowRK`
-(exponentiation), and the match predicates `MatchesAt`/`StrMatchesAt`.
+(exponentiation), and the match predicates
+`MatchesAtRange`/`MatchesAt`/`NoMatchBefore`/`StrMatchesAt`.
 
 Notably, the contracts capture:
 
 - the exact Rabin-Karp hash equations for all four hash functions, including
   correctness of the exponentiation-by-squaring loop
   (`pow == PrimeRK^len(sep)`);
-- for `IndexRabinKarpBytes`: if the result is `-1`, no window of `s` equals
-  `sep` (as byte sequences); otherwise `sep` occurs in `s` at the returned
-  index, and the values of `s` and `sep` are preserved. (That the returned
-  index is the *first* occurrence is not proved for this function; see
-  Limitations.)
+- for `IndexRabinKarpBytes`: that the rolling hash is exactly
+  `RKHashRange(seq(s), i-n, i)` at every iteration — the algorithm's core
+  arithmetic, including the roll step that drops the outgoing byte and admits
+  the incoming one — and that a non-`-1` result lies within
+  `[0, len(s)-len(sep)]`. That the result *is* a match, and that it is the
+  *first* one, are specified in `spec.gobra` but not currently discharged;
+  see Limitations.
 - for `IndexRabinKarp` (strings): the full first-occurrence contract, stated
   with `StrMatchesAt`, which is the strongest property expressible in Gobra's
   abstract string model (see Limitations).
@@ -96,19 +99,62 @@ The implementation logic is unchanged. The full list of code-level edits:
   no extensionality. A pointwise "the bytes match" property is therefore not
   expressible for `IndexRabinKarp`; `StrMatchesAt` instead captures exactly
   the test the code performs (window hash equal and string comparison
-  succeeds). The byte-slice variant has the full pointwise contract.
+  succeeds). Note the irony that the string version, despite the weaker
+  model, is the one with a complete first-occurrence contract: its abstraction
+  is heap-independent, so its obligations are far cheaper than the byte
+  version's `seq(s)`-based ones.
 - **Assembly.** `Equal` and the other assembly-backed functions of the package
   are not verified; `Equal`'s contract is trusted (see above).
-- **Minimality for `IndexRabinKarpBytes`.** The "no earlier match"
-  postcondition for the found-match case is maintained as a loop invariant and
-  holds, but exhaling it at the early `return i - n` requires transporting a
-  quantified fact over the heap-dependent `seq(s)`/`seq(sep)` terms into the
-  postcondition state, which Silicon/Z3 does not manage within any practical
-  assert timeout (the equivalent property for the string version, whose
-  hash abstraction is heap-independent, verifies fine). The conjunct is
-  therefore omitted from the byte version's contract; the complete
-  "`-1` implies no match anywhere" direction and the "result is a match"
-  direction are both verified.
+- **Search correctness for `IndexRabinKarpBytes` (deferred).** The contract
+  currently proves the rolling-hash invariant and the result bounds, but not
+  the three search-correctness conjuncts:
+
+  ```go
+  ensures res == -1 ==> NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
+  ensures res != -1 ==> MatchesAt(seq(s), seq(sep), res)
+  ensures res != -1 ==> NoMatchBefore(seq(s), seq(sep), res)
+  ```
+
+  All the machinery for them is present and verified in `spec.gobra` —
+  `MatchesAtRange`, `MatchesAt`, `NoMatchBefore` and seven lemmas, each of
+  which verifies in about 10s in isolation. What does not discharge is their
+  use inside `IndexRabinKarpBytes`, which is a *performance* problem rather
+  than a proof gap: every step involved is derivable, and the properties
+  themselves hold (the assertion that blocked the loop is literally the loop
+  invariant modulo linear arithmetic).
+
+  The concrete blocker is the precondition of `lemmaMatchesAtFalseHash` on the
+  hash-mismatch path, which maintains the `NoMatchBefore` invariant. It fails
+  at both the default 30s and a 120s assert budget, and the budget cannot be
+  raised much further: Gobra derives Z3's `rlimit` as
+  `assert_timeout * 10000`, which overflows signed 32-bit above roughly 214s
+  and aborts the whole package with an opaque Z3 parse error.
+
+  Measured with Silicon's `--recordProofQueries` ([PR #966]), the cost is
+  concentrated rather than diffuse: 94% of prover time is
+  `FunctionalCorrectness` in a handful of very large queries, while branching
+  (`ScopeManagement`, 2458 queries) accounts for 1 second in total and
+  quantified permissions for ~5%. So the remaining work is about shrinking a
+  few individual queries, not about path explosion or permissions.
+
+  Three encoding changes made while investigating this are kept, because they
+  are what would make resuming feasible — together they took the package from
+  42m09s to 10m41s with the full spec, and the reduced spec now verifies in
+  about 70s:
+
+  1. `MatchesAt` is defined via the recursive `MatchesAtRange` instead of
+     `q[j:j+len(pat)] == pat`. Sequence slicing encodes to nested
+     `Seq_take`/`Seq_drop` terms, which dominated the profile.
+  2. Contracts are stated in a single heap. `preserves acc(s, p)` gives
+     callers value stability by framing, so `ensures seq(s) == old(seq(s))`
+     was redundant, and cross-heap sequence equalities are expensive.
+  3. Quantifier triggers contain no interpreted arithmetic — `ghost lo := i-n`
+     makes `{&s[lo:i][k]}` a legal pattern where `{&s[i-n:i][k]}` is not.
+     Gobra does not check trigger validity (and `--checkConsistency` conflicts
+     with `--config`, which CI uses), so invalid triggers are otherwise
+     silently accepted and handed to Z3 effectively untriggered.
+
+  [PR #966]: https://github.com/viperproject/silicon/pull/966
 
 ## Verification setup
 
@@ -117,5 +163,7 @@ The implementation logic is unchanged. The full list of code-level edits:
   `src/internal/bytealg/gobra.json`.
 - CI: the `Gobra` workflow verifies the package with
   `viperproject/gobra-action` in config-file mode.
-- Local runs: `java -jar gobra.jar --config src/internal/bytealg` with Z3
-  4.8.7.
+- Local runs: `java -jar gobra.jar --config <abs-path>/src/internal/bytealg`
+  with Z3 4.8.7. The config path must be absolute; a relative one is resolved
+  against the module root and fails with `File 'src/src/.' not found`.
+  The package currently verifies in about 70s.

@@ -110,12 +110,53 @@ pure func PowRK(b uint32, e int) uint32 {
 	return e == 0 ? uint32(1) : PowRK(b, e-1) * b
 }
 
+// MatchesAtRange states that the first k bytes of pat occur in q at position
+// j. Like RKHashRange, this uses a recursive range form rather than sequence
+// slicing: q[j:j+len(pat)] encodes to nested Seq_take/Seq_drop terms, and
+// equalities over those are by far the most expensive obligations in this
+// package.
+ghost
+requires 0 <= j && 0 <= k && k <= len(pat) && j+k <= len(q)
+decreases k
+pure func MatchesAtRange(q, pat seq[byte], j, k int) bool {
+	return k == 0 ? true :
+		(q[j+k-1] == pat[k-1] && MatchesAtRange(q, pat, j, k-1))
+}
+
+// lemmaMatchesAtRangeFromPointwise: pointwise equality of the window with the
+// pattern establishes MatchesAtRange. The trigger pat[m] contains no
+// arithmetic, so it is a valid SMT pattern (unlike q[j+m]).
+ghost
+requires 0 <= j && 0 <= k && k <= len(pat) && j+k <= len(q)
+requires forall m int :: {pat[m]} 0 <= m && m < k ==> q[j+m] == pat[m]
+ensures MatchesAtRange(q, pat, j, k)
+decreases k
+func lemmaMatchesAtRangeFromPointwise(q, pat seq[byte], j, k int) {
+	if k > 0 {
+		lemmaMatchesAtRangeFromPointwise(q, pat, j, k-1)
+	}
+}
+
+// lemmaMatchesAtRangePointwise: the converse, used to refute a match from a
+// single mismatching position.
+ghost
+requires 0 <= j && 0 <= k && k <= len(pat) && j+k <= len(q)
+requires MatchesAtRange(q, pat, j, k)
+ensures forall m int :: {pat[m]} 0 <= m && m < k ==> q[j+m] == pat[m]
+decreases k
+func lemmaMatchesAtRangePointwise(q, pat seq[byte], j, k int) {
+	if k > 0 {
+		lemmaMatchesAtRangePointwise(q, pat, j, k-1)
+	}
+}
+
 // MatchesAt states that the pattern pat occurs in q at position j.
 ghost
 requires 0 <= j && j+len(pat) <= len(q)
 decreases
+opaque
 pure func MatchesAt(q, pat seq[byte], j int) bool {
-	return q[j : j+len(pat)] == pat
+	return MatchesAtRange(q, pat, j, len(pat))
 }
 
 // StrMatchesAt is the analogue of MatchesAt for strings. Gobra models strings
@@ -287,7 +328,44 @@ requires q[j:j+len(pat)] == pat
 ensures MatchesAt(q, pat, j)
 decreases
 func lemmaMatchesAtTrue(q, pat seq[byte], j int) {
-	assert MatchesAt(q, pat, j)
+	assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==>
+		q[j+m] == q[j:j+len(pat)][m]
+	assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==> q[j+m] == pat[m]
+	lemmaMatchesAtRangeFromPointwise(q, pat, j, len(pat))
+	assert reveal MatchesAt(q, pat, j)
+}
+
+// lemmaMatchesAtTruePointwise introduces MatchesAt from a pointwise window
+// match. Callers prefer this over lemmaMatchesAtTrue: it never mentions
+// q[j:j+len(pat)], so no Seq_take/Seq_drop terms enter the caller's context.
+ghost
+requires 0 <= j && j+len(pat) <= len(q)
+requires forall m int :: {pat[m]} 0 <= m && m < len(pat) ==> q[j+m] == pat[m]
+ensures MatchesAt(q, pat, j)
+decreases
+func lemmaMatchesAtTruePointwise(q, pat seq[byte], j int) {
+	lemmaMatchesAtRangeFromPointwise(q, pat, j, len(pat))
+	assert reveal MatchesAt(q, pat, j)
+}
+
+// lemmaMatchesAtFalseWitness refutes MatchesAt from a window sequence w that
+// agrees with q at position j but differs from pat. w is the sequence of the
+// resliced window (seq(s[j:j+n])), which is a plain slice-to-seq term rather
+// than a slice of a sequence, so this too keeps slicing out of the caller.
+ghost
+requires 0 <= j && j+len(pat) <= len(q)
+requires len(w) == len(pat)
+requires forall m int :: {pat[m]} 0 <= m && m < len(pat) ==> w[m] == q[j+m]
+requires w != pat
+ensures !MatchesAt(q, pat, j)
+decreases
+func lemmaMatchesAtFalseWitness(q, pat, w seq[byte], j int) {
+	if reveal MatchesAt(q, pat, j) {
+		lemmaMatchesAtRangePointwise(q, pat, j, len(pat))
+		assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==> w[m] == pat[m]
+		assert w == pat
+		assert false
+	}
 }
 
 // lemmaMatchesAtFalseNeq refutes MatchesAt from an established window
@@ -298,7 +376,16 @@ requires q[j:j+len(pat)] != pat
 ensures !MatchesAt(q, pat, j)
 decreases
 func lemmaMatchesAtFalseNeq(q, pat seq[byte], j int) {
-	assert !MatchesAt(q, pat, j)
+	if reveal MatchesAt(q, pat, j) {
+		lemmaMatchesAtRangePointwise(q, pat, j, len(pat))
+		assert len(q[j:j+len(pat)]) == len(pat)
+		assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==>
+			q[j:j+len(pat)][m] == q[j+m]
+		assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==>
+			q[j:j+len(pat)][m] == pat[m]
+		assert q[j:j+len(pat)] == pat
+		assert false
+	}
 }
 
 // lemmaMatchesAtFalseHash refutes MatchesAt from a window-hash mismatch: if
@@ -312,7 +399,7 @@ func lemmaMatchesAtFalseHash(q, pat seq[byte], j int) {
 	if q[j:j+len(pat)] == pat {
 		lemmaRKHashRangeCongruence(q, pat, j)
 	}
-	assert !MatchesAt(q, pat, j)
+	lemmaMatchesAtFalseNeq(q, pat, j)
 }
 
 // lemmaRKHashStrDropFirst is the string counterpart of

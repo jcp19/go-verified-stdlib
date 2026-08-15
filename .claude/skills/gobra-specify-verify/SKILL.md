@@ -103,6 +103,20 @@ signature `pure func (p Packet, s []byte) bool` that **may** have access to `p.M
   a. you get feedback through the `gobra-review-code` skill, which looks out for common Gobra mistakes. Note that some pieces of feedback may be irrelevant. Be strict about which pieces of feedback are worth implementing, especially those that have to do with how predicates are organized.
   b. in case there are tests for the current package, you can use them as a yardstick for the quality of your specifications. You should reproduce the tests in a separate .gobra file (if the original is called `x_test.go`, you create a new file `x_test.gobra`). These files should have the same package clause as the implementation files (rather than a test package). It should be marked for verification with `// +gobra`. The idea is that you create a copy of each testing method and implement it, removing references to the testing framework (e.g., deleting `testing.T` parameters) and replacing whatever calls to the testing framework by `assert` statements. You may need to add proof annotations, but you may never add assumptions to make the proofs go through. This will tell you whether your specs are too strict (e.g., a call in a test does not satisfy the precondition, even though it is perfectly benign), or whether the functional specs are too weak (for example, a postcondition is not strong enough to prove an assertion in the program). You are not allowed to change the testing code other than the transformations I mentioned, except for one transform: you often see tests structured as maps, and the tests iterate through the maps (whose values contain the inputs to a test and the expected result). In those cases, I prefer that you create a separate function for the tests, where each function has only one of the entries of the map. NOTE: for now, the transformation of test functions needs to be done by hand. In the future, I may be able to create a deterministic transformation. The outcome of this step should be a concise list of points to incorporate. You use this feedback and start refining the specifications (go back to step 4) until (1) tests can be verified, (2) you fail to do it after 6 iterations. If you need to create new lemmas to prove the correctness of the tests, feel free to make reusable versions of the lemmas available to clients.
 
+### Review and tests catch different things — do both
+
+Step 5's two checks are not redundant. The tests exercise the modes a client
+actually uses, so they find specs that are too weak *there*; the review pass
+finds gaps in the modes no test happens to hit. In `container/list` the tests
+were all green while `Remove` still failed to state that the list stays
+initialized when the removed element belongs to it — a real gap, invisible to
+every test, found only by reading the contract.
+
+Also: if you ever weaken a postcondition because it "costs too much", treat
+that as a diagnosis to check, not a conclusion. The expensive thing is usually
+the *encoding of the invariant* that supports the postcondition, not the
+postcondition itself — see `gobra-improve-perf`.
+
 ### Carrying the abstraction: ghost fields beat predicate parameters
 
 For a mutable struct, prefer **ghost fields plus pure getters** over a

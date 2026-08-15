@@ -469,6 +469,20 @@ do the pointer surgery, then `fold`.
 - **Buying speed with `trusted`, `assume`, or deleted postconditions.** That is
   not an optimization, it is a hole in the proof. If you ever do this
   deliberately as a temporary measure, say so loudly in the report.
+
+  A weakened postcondition is the subtler version: still sound, but a spec
+  regression, and usually a symptom rather than a cause. Before you drop a
+  clause, re-encode the invariant that supports it (section 7) — in
+  `container/list` the postcondition that "looked too expensive to keep" was
+  cheap under a ghost accumulator, and the **stronger** spec verified in 3m41s
+  where the weaker one took 5–9 minutes. Stronger does not imply slower.
+
+- **Assuming breadcrumb assertions are free.** They are a change like any
+  other and must be measured. An `assert` restating a whole abstraction
+  equality can cost more than the step it was meant to cheapen: adding six of
+  them to a test chain took a package from 4m02 to 6m28 *and* pushed a new
+  failure elsewhere. Useful breadcrumbs name one small fact (a neighbour, an
+  index); wholesale restatements of the state usually are not.
 - **Chasing a member you haven't measured.** Slow *predicates* and small pure
   functions are frequently the real culprits behind a slow method, because their
   cost is paid at every unfold or call site.

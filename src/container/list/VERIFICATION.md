@@ -77,6 +77,11 @@ specifications statically. Deviations, all semantics-preserving:
 
 `example_test.go` is not translated (it exercises `fmt`, not the list).
 
+## Formatting
+
+`list.go` is `gofmt`-clean: gofmt rewrites `//@` into `// @`, and Gobra
+accepts that spelling, so the file passes both tools.
+
 ## Running the verification
 
 ```sh

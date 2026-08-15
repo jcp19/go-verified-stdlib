@@ -7,10 +7,10 @@
 // Package list implements a doubly linked list.
 //
 // To iterate over a list (where l is a *List):
+//
 //	for e := l.Front(); e != nil; e = e.Next() {
 //		// do something with e.Value
 //	}
-//
 package list
 
 // Element is an element of a linked list.
@@ -34,13 +34,13 @@ type Element struct {
 // The ghost parameters describe where e currently lives: if l is non-nil,
 // e is the element at index i of list l; if l is nil, e is detached (it does
 // not belong to any list) and the caller owns it.
-//@ requires l != nil ==> l.Mem(es, vs, true) && 0 <= i && i < len(es) && es[i] == e
-//@ requires l == nil ==> acc(e) && e.list == nil
-//@ ensures  l != nil ==> l.Mem(es, vs, true)
-//@ ensures  l != nil && i < len(es)-1 ==> ret == es[i+1] && ret != nil
-//@ ensures  l != nil && i == len(es)-1 ==> ret == nil
-//@ ensures  l == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
-//@ decreases
+// @ requires l != nil ==> l.Mem(es, vs, true) && 0 <= i && i < len(es) && es[i] == e
+// @ requires l == nil ==> acc(e) && e.list == nil
+// @ ensures  l != nil ==> l.Mem(es, vs, true)
+// @ ensures  l != nil && i < len(es)-1 ==> ret == es[i+1] && ret != nil
+// @ ensures  l != nil && i == len(es)-1 ==> ret == nil
+// @ ensures  l == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
+// @ decreases
 func (e *Element) Next( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[any], ghost i int @*/ ) (ret *Element) {
 	//@ ghost if l != nil { unfold l.Mem(es, vs, true) }
 	//@ assert l != nil && i < len(es)-1 ==> es[i+1] != nil
@@ -55,13 +55,13 @@ func (e *Element) Next( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[
 // Prev returns the previous list element or nil.
 //
 // The ghost parameters play the same role as in Next.
-//@ requires l != nil ==> l.Mem(es, vs, true) && 0 <= i && i < len(es) && es[i] == e
-//@ requires l == nil ==> acc(e) && e.list == nil
-//@ ensures  l != nil ==> l.Mem(es, vs, true)
-//@ ensures  l != nil && i > 0 ==> ret == es[i-1] && ret != nil
-//@ ensures  l != nil && i == 0 ==> ret == nil
-//@ ensures  l == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
-//@ decreases
+// @ requires l != nil ==> l.Mem(es, vs, true) && 0 <= i && i < len(es) && es[i] == e
+// @ requires l == nil ==> acc(e) && e.list == nil
+// @ ensures  l != nil ==> l.Mem(es, vs, true)
+// @ ensures  l != nil && i > 0 ==> ret == es[i-1] && ret != nil
+// @ ensures  l != nil && i == 0 ==> ret == nil
+// @ ensures  l == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
+// @ decreases
 func (e *Element) Prev( /*@ ghost l *List, ghost es seq[*Element], ghost vs seq[any], ghost i int @*/ ) (ret *Element) {
 	//@ ghost if l != nil { unfold l.Mem(es, vs, true) }
 	//@ assert l != nil && i > 0 ==> es[i-1] != nil
@@ -81,10 +81,10 @@ type List struct {
 }
 
 // Init initializes or clears list l.
-//@ requires l.Mem(es, vs, ini)
-//@ ensures  l.Mem(seq[*Element]{}, seq[any]{}, true)
-//@ ensures  ret == l
-//@ decreases
+// @ requires l.Mem(es, vs, ini)
+// @ ensures  l.Mem(seq[*Element]{}, seq[any]{}, true)
+// @ ensures  ret == l
+// @ decreases
 func (l *List) Init( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/ ) (ret *List) {
 	//@ unfold l.Mem(es, vs, ini)
 	l.root.next = &l.root
@@ -95,9 +95,9 @@ func (l *List) Init( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini bo
 }
 
 // New returns an initialized list.
-//@ ensures ret != nil
-//@ ensures ret.Mem(seq[*Element]{}, seq[any]{}, true)
-//@ decreases
+// @ ensures ret != nil
+// @ ensures ret.Mem(seq[*Element]{}, seq[any]{}, true)
+// @ decreases
 func New() (ret *List) {
 	l := new(List)
 	//@ fold l.Mem(seq[*Element]{}, seq[any]{}, false)
@@ -106,20 +106,20 @@ func New() (ret *List) {
 
 // Len returns the number of elements of list l.
 // The complexity is O(1).
-//@ requires acc(l.Mem(es, vs, ini), _)
-//@ ensures  res == len(es)
-//@ decreases
-//@ pure
+// @ requires acc(l.Mem(es, vs, ini), _)
+// @ ensures  res == len(es)
+// @ decreases
+// @ pure
 func (l *List) Len( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/ ) (res int) {
 	return /*@ unfolding acc(l.Mem(es, vs, ini), _) in @*/ l.length
 }
 
 // Front returns the first element of list l or nil if the list is empty.
-//@ requires l.Mem(es, vs, ini)
-//@ ensures  l.Mem(es, vs, ini)
-//@ ensures  len(es) > 0 ==> ret == es[0] && ret != nil
-//@ ensures  len(es) == 0 ==> ret == nil
-//@ decreases
+// @ requires l.Mem(es, vs, ini)
+// @ ensures  l.Mem(es, vs, ini)
+// @ ensures  len(es) > 0 ==> ret == es[0] && ret != nil
+// @ ensures  len(es) == 0 ==> ret == nil
+// @ decreases
 func (l *List) Front( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/ ) (ret *Element) {
 	//@ unfold l.Mem(es, vs, ini)
 	if l.length == 0 {
@@ -132,11 +132,11 @@ func (l *List) Front( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini b
 }
 
 // Back returns the last element of list l or nil if the list is empty.
-//@ requires l.Mem(es, vs, ini)
-//@ ensures  l.Mem(es, vs, ini)
-//@ ensures  len(es) > 0 ==> ret == es[len(es)-1] && ret != nil
-//@ ensures  len(es) == 0 ==> ret == nil
-//@ decreases
+// @ requires l.Mem(es, vs, ini)
+// @ ensures  l.Mem(es, vs, ini)
+// @ ensures  len(es) > 0 ==> ret == es[len(es)-1] && ret != nil
+// @ ensures  len(es) == 0 ==> ret == nil
+// @ decreases
 func (l *List) Back( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/ ) (ret *Element) {
 	//@ unfold l.Mem(es, vs, ini)
 	if l.length == 0 {
@@ -149,9 +149,9 @@ func (l *List) Back( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini bo
 }
 
 // lazyInit lazily initializes a zero List value.
-//@ requires l.Mem(es, vs, ini)
-//@ ensures  l.Mem(es, vs, true)
-//@ decreases
+// @ requires l.Mem(es, vs, ini)
+// @ ensures  l.Mem(es, vs, true)
+// @ decreases
 func (l *List) lazyInit( /*@ ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/ ) {
 	//@ unfold l.Mem(es, vs, ini)
 	uninit := l.root.next == nil
@@ -166,14 +166,14 @@ func (l *List) lazyInit( /*@ ghost es seq[*Element], ghost vs seq[any], ghost in
 //
 // The ghost index j identifies at: j == -1 stands for the sentinel &l.root,
 // and 0 <= j < len(es) stands for es[j].
-//@ requires l.Mem(es, vs, true)
-//@ requires acc(e) && e.list == nil
-//@ requires -1 <= j && j < len(es)
-//@ requires at == (j == -1 ? &l.root : es[j])
-//@ ensures  l.Mem(es[:j+1] ++ seq[*Element]{e} ++ es[j+1:], vs[:j+1] ++ seq[any]{old(e.Value)} ++ vs[j+1:], true)
-//@ ensures  ret == e && ret != nil
-//@ decreases
-func (l *List) insert(e, at *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost j int @*/ ) (ret *Element) {
+// @ requires l.Mem(es, vs, true)
+// @ requires acc(e) && e.list == nil
+// @ requires -1 <= j && j < len(es)
+// @ requires at == (j == -1 ? &l.root : es[j])
+// @ ensures  l.Mem(es[:j+1] ++ seq[*Element]{e} ++ es[j+1:], vs[:j+1] ++ seq[any]{old(e.Value)} ++ vs[j+1:], true)
+// @ ensures  ret == e && ret != nil
+// @ decreases
+func (l *List) insert(e, at *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost j int @*/) (ret *Element) {
 	//@ unfold l.Mem(es, vs, true)
 	// e is detached (e.list == nil) while every element of es has list == l,
 	// and the sentinel is owned separately, so e is distinct from all of them.
@@ -202,24 +202,24 @@ func (l *List) insert(e, at *Element /*@ , ghost es seq[*Element], ghost vs seq[
 }
 
 // insertValue is a convenience wrapper for insert(&Element{Value: v}, at).
-//@ requires l.Mem(es, vs, true)
-//@ requires -1 <= j && j < len(es)
-//@ requires at == (j == -1 ? &l.root : es[j])
-//@ ensures  l.Mem(es[:j+1] ++ seq[*Element]{ret} ++ es[j+1:], vs[:j+1] ++ seq[any]{v} ++ vs[j+1:], true)
-//@ ensures  ret != nil
-//@ decreases
-func (l *List) insertValue(v any, at *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost j int @*/ ) (ret *Element) {
-	return l.insert(&Element{Value: v}, at /*@ , es, vs, j @*/ )
+// @ requires l.Mem(es, vs, true)
+// @ requires -1 <= j && j < len(es)
+// @ requires at == (j == -1 ? &l.root : es[j])
+// @ ensures  l.Mem(es[:j+1] ++ seq[*Element]{ret} ++ es[j+1:], vs[:j+1] ++ seq[any]{v} ++ vs[j+1:], true)
+// @ ensures  ret != nil
+// @ decreases
+func (l *List) insertValue(v any, at *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost j int @*/) (ret *Element) {
+	return l.insert(&Element{Value: v}, at /*@ , es, vs, j @*/)
 }
 
 // remove removes e from its list, decrements l.length
-//@ requires l.Mem(es, vs, true)
-//@ requires len(es) == len(vs)
-//@ requires 0 <= i && i < len(es) && es[i] == e
-//@ ensures  l.Mem(es[:i] ++ es[i+1:], vs[:i] ++ vs[i+1:], true)
-//@ ensures  acc(e) && e.list == nil && e.next == nil && e.prev == nil && e.Value === vs[i]
-//@ decreases
-func (l *List) remove(e *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost i int @*/ ) {
+// @ requires l.Mem(es, vs, true)
+// @ requires len(es) == len(vs)
+// @ requires 0 <= i && i < len(es) && es[i] == e
+// @ ensures  l.Mem(es[:i] ++ es[i+1:], vs[:i] ++ vs[i+1:], true)
+// @ ensures  acc(e) && e.list == nil && e.next == nil && e.prev == nil && e.Value === vs[i]
+// @ decreases
+func (l *List) remove(e *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost i int @*/) {
 	//@ unfold l.Mem(es, vs, true)
 	//@ ghost var es2 seq[*Element] = es[:i] ++ es[i+1:]
 	//@ ghost var vs2 seq[any] = vs[:i] ++ vs[i+1:]
@@ -244,14 +244,14 @@ func (l *List) remove(e *Element /*@ , ghost es seq[*Element], ghost vs seq[any]
 //
 // The ghost index i identifies e (e == es[i]) and the ghost index j
 // identifies at, as in insert: j == -1 stands for the sentinel &l.root.
-//@ requires l.Mem(es, vs, true)
-//@ requires len(es) == len(vs)
-//@ requires 0 <= i && i < len(es) && es[i] == e
-//@ requires -1 <= j && j < len(es)
-//@ requires at == (j == -1 ? &l.root : es[j])
-//@ ensures  l.Mem(moveSeq(es, i, j), moveSeqV(vs, i, j), true)
-//@ decreases
-func (l *List) move(e, at *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost i int, ghost j int @*/ ) {
+// @ requires l.Mem(es, vs, true)
+// @ requires len(es) == len(vs)
+// @ requires 0 <= i && i < len(es) && es[i] == e
+// @ requires -1 <= j && j < len(es)
+// @ requires at == (j == -1 ? &l.root : es[j])
+// @ ensures  l.Mem(moveSeq(es, i, j), moveSeqV(vs, i, j), true)
+// @ decreases
+func (l *List) move(e, at *Element /*@ , ghost es seq[*Element], ghost vs seq[any], ghost i int, ghost j int @*/) {
 	//@ unfold l.Mem(es, vs, true)
 	//@ assert forall i1, i2 int :: {es[i1], es[i2]} 0 <= i1 && i1 < i2 && i2 < len(es) ==> es[i1] != es[i2]
 	if e == at {
@@ -303,18 +303,18 @@ func (l *List) move(e, at *Element /*@ , ghost es seq[*Element], ghost vs seq[an
 // The ghost parameters describe where e currently lives: in l itself
 // (el == l, at index i), in another list el (with contents ees/evs, at
 // index i), or detached (el == nil, owned by the caller).
-//@ requires l.Mem(es, vs, ini)
-//@ requires len(es) == len(vs)
-//@ requires el == l ==> 0 <= i && i < len(es) && es[i] == e
-//@ requires el != l && el != nil ==> el.Mem(ees, evs, true) && len(ees) == len(evs) && 0 <= i && i < len(ees) && ees[i] == e
-//@ requires el == nil ==> acc(e) && e.list == nil
-//@ ensures  el == l ==> l.Mem(es[:i] ++ es[i+1:], vs[:i] ++ vs[i+1:], true)
-//@ ensures  el == l ==> acc(e) && e.list == nil && e.next == nil && e.prev == nil && e.Value === vs[i] && ret === vs[i]
-//@ ensures  el != l ==> l.Mem(es, vs, ini)
-//@ ensures  el != l && el != nil ==> el.Mem(ees, evs, true) && ret === evs[i]
-//@ ensures  el == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret === old(e.Value)
-//@ decreases
-func (l *List) Remove(e *Element /*@ , ghost el *List, ghost es seq[*Element], ghost vs seq[any], ghost ees seq[*Element], ghost evs seq[any], ghost i int, ghost ini bool @*/ ) (ret any) {
+// @ requires l.Mem(es, vs, ini)
+// @ requires len(es) == len(vs)
+// @ requires el == l ==> 0 <= i && i < len(es) && es[i] == e
+// @ requires el != l && el != nil ==> el.Mem(ees, evs, true) && len(ees) == len(evs) && 0 <= i && i < len(ees) && ees[i] == e
+// @ requires el == nil ==> acc(e) && e.list == nil
+// @ ensures  el == l ==> l.Mem(es[:i] ++ es[i+1:], vs[:i] ++ vs[i+1:], true)
+// @ ensures  el == l ==> acc(e) && e.list == nil && e.next == nil && e.prev == nil && e.Value === vs[i] && ret === vs[i]
+// @ ensures  el != l ==> l.Mem(es, vs, ini)
+// @ ensures  el != l && el != nil ==> el.Mem(ees, evs, true) && ret === evs[i]
+// @ ensures  el == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret === old(e.Value)
+// @ decreases
+func (l *List) Remove(e *Element /*@ , ghost el *List, ghost es seq[*Element], ghost vs seq[any], ghost ees seq[*Element], ghost evs seq[any], ghost i int, ghost ini bool @*/) (ret any) {
 	//@ unfold l.Mem(es, vs, ini)
 	//@ ghost if el != nil && el != l { unfold el.Mem(ees, evs, true) }
 	inList := e.list == l
@@ -322,7 +322,7 @@ func (l *List) Remove(e *Element /*@ , ghost el *List, ghost es seq[*Element], g
 	if inList {
 		// if e.list == l, l must have been initialized when e was inserted
 		// in l or l == nil (e is a zero Element) and l.remove will crash
-		l.remove(e /*@ , es, vs, i @*/ )
+		l.remove(e /*@ , es, vs, i @*/)
 	}
 	v := e.Value
 	//@ ghost if el != nil && el != l { fold el.Mem(ees, evs, true) }
@@ -330,26 +330,26 @@ func (l *List) Remove(e *Element /*@ , ghost el *List, ghost es seq[*Element], g
 }
 
 // PushFront inserts a new element e with value v at the front of list l and returns e.
-//@ requires l.Mem(es, vs, ini)
-//@ ensures  l.Mem(seq[*Element]{ret} ++ es, seq[any]{v} ++ vs, true)
-//@ ensures  ret != nil
-//@ decreases
-func (l *List) PushFront(v any /*@ , ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/ ) (ret *Element) {
+// @ requires l.Mem(es, vs, ini)
+// @ ensures  l.Mem(seq[*Element]{ret} ++ es, seq[any]{v} ++ vs, true)
+// @ ensures  ret != nil
+// @ decreases
+func (l *List) PushFront(v any /*@ , ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/) (ret *Element) {
 	l.lazyInit( /*@ es, vs, ini @*/ )
-	return l.insertValue(v, &l.root /*@ , es, vs, -1 @*/ )
+	return l.insertValue(v, &l.root /*@ , es, vs, -1 @*/)
 }
 
 // PushBack inserts a new element e with value v at the back of list l and returns e.
-//@ requires l.Mem(es, vs, ini)
-//@ ensures  l.Mem(es ++ seq[*Element]{ret}, vs ++ seq[any]{v}, true)
-//@ ensures  ret != nil
-//@ decreases
-func (l *List) PushBack(v any /*@ , ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/ ) (ret *Element) {
+// @ requires l.Mem(es, vs, ini)
+// @ ensures  l.Mem(es ++ seq[*Element]{ret}, vs ++ seq[any]{v}, true)
+// @ ensures  ret != nil
+// @ decreases
+func (l *List) PushBack(v any /*@ , ghost es seq[*Element], ghost vs seq[any], ghost ini bool @*/) (ret *Element) {
 	l.lazyInit( /*@ es, vs, ini @*/ )
 	//@ unfold l.Mem(es, vs, true)
 	at := l.root.prev
 	//@ fold l.Mem(es, vs, true)
-	return l.insertValue(v, at /*@ , es, vs, len(es)-1 @*/ )
+	return l.insertValue(v, at /*@ , es, vs, len(es)-1 @*/)
 }
 
 // InsertBefore inserts a new element e with value v immediately before mark and returns e.
@@ -357,16 +357,16 @@ func (l *List) PushBack(v any /*@ , ghost es seq[*Element], ghost vs seq[any], g
 // The mark must not be nil.
 //
 // The ghost parameters describe where mark currently lives, as in Remove.
-//@ requires l.Mem(es, vs, ini)
-//@ requires ml == l ==> 0 <= m && m < len(es) && es[m] == mark
-//@ requires ml != l && ml != nil ==> ml.Mem(mes, mvs, true) && 0 <= m && m < len(mes) && mes[m] == mark
-//@ requires ml == nil ==> acc(mark) && mark.list == nil
-//@ ensures  ml == l ==> l.Mem(es[:m] ++ seq[*Element]{ret} ++ es[m:], vs[:m] ++ seq[any]{v} ++ vs[m:], true) && ret != nil
-//@ ensures  ml != l ==> l.Mem(es, vs, ini) && ret == nil
-//@ ensures  ml != l && ml != nil ==> ml.Mem(mes, mvs, true)
-//@ ensures  ml == nil ==> acc(mark) && mark.list == nil && mark.next == old(mark.next) && mark.prev == old(mark.prev) && mark.Value === old(mark.Value)
-//@ decreases
-func (l *List) InsertBefore(v any, mark *Element /*@ , ghost ml *List, ghost es seq[*Element], ghost vs seq[any], ghost mes seq[*Element], ghost mvs seq[any], ghost m int, ghost ini bool @*/ ) (ret *Element) {
+// @ requires l.Mem(es, vs, ini)
+// @ requires ml == l ==> 0 <= m && m < len(es) && es[m] == mark
+// @ requires ml != l && ml != nil ==> ml.Mem(mes, mvs, true) && 0 <= m && m < len(mes) && mes[m] == mark
+// @ requires ml == nil ==> acc(mark) && mark.list == nil
+// @ ensures  ml == l ==> l.Mem(es[:m] ++ seq[*Element]{ret} ++ es[m:], vs[:m] ++ seq[any]{v} ++ vs[m:], true) && ret != nil
+// @ ensures  ml != l ==> l.Mem(es, vs, ini) && ret == nil
+// @ ensures  ml != l && ml != nil ==> ml.Mem(mes, mvs, true)
+// @ ensures  ml == nil ==> acc(mark) && mark.list == nil && mark.next == old(mark.next) && mark.prev == old(mark.prev) && mark.Value === old(mark.Value)
+// @ decreases
+func (l *List) InsertBefore(v any, mark *Element /*@ , ghost ml *List, ghost es seq[*Element], ghost vs seq[any], ghost mes seq[*Element], ghost mvs seq[any], ghost m int, ghost ini bool @*/) (ret *Element) {
 	//@ unfold l.Mem(es, vs, ini)
 	//@ ghost if ml != nil && ml != l { unfold ml.Mem(mes, mvs, true) }
 	if mark.list != l {
@@ -377,7 +377,7 @@ func (l *List) InsertBefore(v any, mark *Element /*@ , ghost ml *List, ghost es 
 	at := mark.prev
 	//@ fold l.Mem(es, vs, ini)
 	// see comment in List.Remove about initialization of l
-	return l.insertValue(v, at /*@ , es, vs, m-1 @*/ )
+	return l.insertValue(v, at /*@ , es, vs, m-1 @*/)
 }
 
 // InsertAfter inserts a new element e with value v immediately after mark and returns e.
@@ -385,16 +385,16 @@ func (l *List) InsertBefore(v any, mark *Element /*@ , ghost ml *List, ghost es 
 // The mark must not be nil.
 //
 // The ghost parameters describe where mark currently lives, as in Remove.
-//@ requires l.Mem(es, vs, ini)
-//@ requires ml == l ==> 0 <= m && m < len(es) && es[m] == mark
-//@ requires ml != l && ml != nil ==> ml.Mem(mes, mvs, true) && 0 <= m && m < len(mes) && mes[m] == mark
-//@ requires ml == nil ==> acc(mark) && mark.list == nil
-//@ ensures  ml == l ==> l.Mem(es[:m+1] ++ seq[*Element]{ret} ++ es[m+1:], vs[:m+1] ++ seq[any]{v} ++ vs[m+1:], true) && ret != nil
-//@ ensures  ml != l ==> l.Mem(es, vs, ini) && ret == nil
-//@ ensures  ml != l && ml != nil ==> ml.Mem(mes, mvs, true)
-//@ ensures  ml == nil ==> acc(mark) && mark.list == nil && mark.next == old(mark.next) && mark.prev == old(mark.prev) && mark.Value === old(mark.Value)
-//@ decreases
-func (l *List) InsertAfter(v any, mark *Element /*@ , ghost ml *List, ghost es seq[*Element], ghost vs seq[any], ghost mes seq[*Element], ghost mvs seq[any], ghost m int, ghost ini bool @*/ ) (ret *Element) {
+// @ requires l.Mem(es, vs, ini)
+// @ requires ml == l ==> 0 <= m && m < len(es) && es[m] == mark
+// @ requires ml != l && ml != nil ==> ml.Mem(mes, mvs, true) && 0 <= m && m < len(mes) && mes[m] == mark
+// @ requires ml == nil ==> acc(mark) && mark.list == nil
+// @ ensures  ml == l ==> l.Mem(es[:m+1] ++ seq[*Element]{ret} ++ es[m+1:], vs[:m+1] ++ seq[any]{v} ++ vs[m+1:], true) && ret != nil
+// @ ensures  ml != l ==> l.Mem(es, vs, ini) && ret == nil
+// @ ensures  ml != l && ml != nil ==> ml.Mem(mes, mvs, true)
+// @ ensures  ml == nil ==> acc(mark) && mark.list == nil && mark.next == old(mark.next) && mark.prev == old(mark.prev) && mark.Value === old(mark.Value)
+// @ decreases
+func (l *List) InsertAfter(v any, mark *Element /*@ , ghost ml *List, ghost es seq[*Element], ghost vs seq[any], ghost mes seq[*Element], ghost mvs seq[any], ghost m int, ghost ini bool @*/) (ret *Element) {
 	//@ unfold l.Mem(es, vs, ini)
 	//@ ghost if ml != nil && ml != l { unfold ml.Mem(mes, mvs, true) }
 	if mark.list != l {
@@ -404,7 +404,7 @@ func (l *List) InsertAfter(v any, mark *Element /*@ , ghost ml *List, ghost es s
 	}
 	//@ fold l.Mem(es, vs, ini)
 	// see comment in List.Remove about initialization of l
-	return l.insertValue(v, mark /*@ , es, vs, m @*/ )
+	return l.insertValue(v, mark /*@ , es, vs, m @*/)
 }
 
 // MoveToFront moves element e to the front of list l.
@@ -412,17 +412,17 @@ func (l *List) InsertAfter(v any, mark *Element /*@ , ghost ml *List, ghost es s
 // The element must not be nil.
 //
 // The ghost parameters describe where e currently lives, as in Remove.
-//@ requires l.Mem(es, vs, ini)
-//@ requires len(es) == len(vs)
-//@ requires el == l ==> 0 <= i && i < len(es) && es[i] == e
-//@ requires el != l && el != nil ==> el.Mem(ees, evs, true) && 0 <= i && i < len(ees) && ees[i] == e
-//@ requires el == nil ==> acc(e) && e.list == nil
-//@ ensures  el == l ==> l.Mem(moveSeq(es, i, -1), moveSeqV(vs, i, -1), true)
-//@ ensures  el != l ==> l.Mem(es, vs, ini)
-//@ ensures  el != l && el != nil ==> el.Mem(ees, evs, true)
-//@ ensures  el == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value)
-//@ decreases
-func (l *List) MoveToFront(e *Element /*@ , ghost el *List, ghost es seq[*Element], ghost vs seq[any], ghost ees seq[*Element], ghost evs seq[any], ghost i int, ghost ini bool @*/ ) {
+// @ requires l.Mem(es, vs, ini)
+// @ requires len(es) == len(vs)
+// @ requires el == l ==> 0 <= i && i < len(es) && es[i] == e
+// @ requires el != l && el != nil ==> el.Mem(ees, evs, true) && 0 <= i && i < len(ees) && ees[i] == e
+// @ requires el == nil ==> acc(e) && e.list == nil
+// @ ensures  el == l ==> l.Mem(moveSeq(es, i, -1), moveSeqV(vs, i, -1), true)
+// @ ensures  el != l ==> l.Mem(es, vs, ini)
+// @ ensures  el != l && el != nil ==> el.Mem(ees, evs, true)
+// @ ensures  el == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value)
+// @ decreases
+func (l *List) MoveToFront(e *Element /*@ , ghost el *List, ghost es seq[*Element], ghost vs seq[any], ghost ees seq[*Element], ghost evs seq[any], ghost i int, ghost ini bool @*/) {
 	//@ unfold l.Mem(es, vs, ini)
 	//@ assert forall i1, i2 int :: {es[i1], es[i2]} 0 <= i1 && i1 < i2 && i2 < len(es) ==> es[i1] != es[i2]
 	//@ ghost if el != nil && el != l { unfold el.Mem(ees, evs, true) }
@@ -433,7 +433,7 @@ func (l *List) MoveToFront(e *Element /*@ , ghost el *List, ghost es seq[*Elemen
 		return
 	}
 	// see comment in List.Remove about initialization of l
-	l.move(e, &l.root /*@ , es, vs, i, -1 @*/ )
+	l.move(e, &l.root /*@ , es, vs, i, -1 @*/)
 }
 
 // MoveToBack moves element e to the back of list l.
@@ -441,17 +441,17 @@ func (l *List) MoveToFront(e *Element /*@ , ghost el *List, ghost es seq[*Elemen
 // The element must not be nil.
 //
 // The ghost parameters describe where e currently lives, as in Remove.
-//@ requires l.Mem(es, vs, ini)
-//@ requires len(es) == len(vs)
-//@ requires el == l ==> 0 <= i && i < len(es) && es[i] == e
-//@ requires el != l && el != nil ==> el.Mem(ees, evs, true) && 0 <= i && i < len(ees) && ees[i] == e
-//@ requires el == nil ==> acc(e) && e.list == nil
-//@ ensures  el == l ==> l.Mem(moveSeq(es, i, len(es)-1), moveSeqV(vs, i, len(vs)-1), true)
-//@ ensures  el != l ==> l.Mem(es, vs, ini)
-//@ ensures  el != l && el != nil ==> el.Mem(ees, evs, true)
-//@ ensures  el == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value)
-//@ decreases
-func (l *List) MoveToBack(e *Element /*@ , ghost el *List, ghost es seq[*Element], ghost vs seq[any], ghost ees seq[*Element], ghost evs seq[any], ghost i int, ghost ini bool @*/ ) {
+// @ requires l.Mem(es, vs, ini)
+// @ requires len(es) == len(vs)
+// @ requires el == l ==> 0 <= i && i < len(es) && es[i] == e
+// @ requires el != l && el != nil ==> el.Mem(ees, evs, true) && 0 <= i && i < len(ees) && ees[i] == e
+// @ requires el == nil ==> acc(e) && e.list == nil
+// @ ensures  el == l ==> l.Mem(moveSeq(es, i, len(es)-1), moveSeqV(vs, i, len(vs)-1), true)
+// @ ensures  el != l ==> l.Mem(es, vs, ini)
+// @ ensures  el != l && el != nil ==> el.Mem(ees, evs, true)
+// @ ensures  el == nil ==> acc(e) && e.list == nil && e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value)
+// @ decreases
+func (l *List) MoveToBack(e *Element /*@ , ghost el *List, ghost es seq[*Element], ghost vs seq[any], ghost ees seq[*Element], ghost evs seq[any], ghost i int, ghost ini bool @*/) {
 	//@ unfold l.Mem(es, vs, ini)
 	//@ assert forall i1, i2 int :: {es[i1], es[i2]} 0 <= i1 && i1 < i2 && i2 < len(es) ==> es[i1] != es[i2]
 	//@ ghost if el != nil && el != l { unfold el.Mem(ees, evs, true) }
@@ -463,7 +463,7 @@ func (l *List) MoveToBack(e *Element /*@ , ghost el *List, ghost es seq[*Element
 		return
 	}
 	// see comment in List.Remove about initialization of l
-	l.move(e, at /*@ , es, vs, i, len(es)-1 @*/ )
+	l.move(e, at /*@ , es, vs, i, len(es)-1 @*/)
 }
 
 // MoveBefore moves element e to its new position before mark.
@@ -472,19 +472,19 @@ func (l *List) MoveToBack(e *Element /*@ , ghost el *List, ghost es seq[*Element
 //
 // e must be an element of l (at ghost index i); the ghost parameters ml,
 // mes, mvs, m describe where mark currently lives, as in Remove.
-//@ requires l.Mem(es, vs, ini)
-//@ requires len(es) == len(vs)
-//@ requires 0 <= i && i < len(es) && es[i] == e
-//@ requires ml == l ==> 0 <= m && m < len(es) && es[m] == mark
-//@ requires ml != l && ml != nil ==> ml.Mem(mes, mvs, true) && 0 <= m && m < len(mes) && mes[m] == mark
-//@ requires ml == nil ==> acc(mark) && mark.list == nil
-//@ ensures  ml == l && i != m ==> l.Mem(moveSeq(es, i, m-1), moveSeqV(vs, i, m-1), true)
-//@ ensures  ml == l && i == m ==> l.Mem(es, vs, ini)
-//@ ensures  ml != l ==> l.Mem(es, vs, ini)
-//@ ensures  ml != l && ml != nil ==> ml.Mem(mes, mvs, true)
-//@ ensures  ml == nil ==> acc(mark) && mark.list == nil && mark.next == old(mark.next) && mark.prev == old(mark.prev) && mark.Value === old(mark.Value)
-//@ decreases
-func (l *List) MoveBefore(e, mark *Element /*@ , ghost ml *List, ghost es seq[*Element], ghost vs seq[any], ghost mes seq[*Element], ghost mvs seq[any], ghost i int, ghost m int, ghost ini bool @*/ ) {
+// @ requires l.Mem(es, vs, ini)
+// @ requires len(es) == len(vs)
+// @ requires 0 <= i && i < len(es) && es[i] == e
+// @ requires ml == l ==> 0 <= m && m < len(es) && es[m] == mark
+// @ requires ml != l && ml != nil ==> ml.Mem(mes, mvs, true) && 0 <= m && m < len(mes) && mes[m] == mark
+// @ requires ml == nil ==> acc(mark) && mark.list == nil
+// @ ensures  ml == l && i != m ==> l.Mem(moveSeq(es, i, m-1), moveSeqV(vs, i, m-1), true)
+// @ ensures  ml == l && i == m ==> l.Mem(es, vs, ini)
+// @ ensures  ml != l ==> l.Mem(es, vs, ini)
+// @ ensures  ml != l && ml != nil ==> ml.Mem(mes, mvs, true)
+// @ ensures  ml == nil ==> acc(mark) && mark.list == nil && mark.next == old(mark.next) && mark.prev == old(mark.prev) && mark.Value === old(mark.Value)
+// @ decreases
+func (l *List) MoveBefore(e, mark *Element /*@ , ghost ml *List, ghost es seq[*Element], ghost vs seq[any], ghost mes seq[*Element], ghost mvs seq[any], ghost i int, ghost m int, ghost ini bool @*/) {
 	//@ unfold l.Mem(es, vs, ini)
 	//@ assert forall i1, i2 int :: {es[i1], es[i2]} 0 <= i1 && i1 < i2 && i2 < len(es) ==> es[i1] != es[i2]
 	//@ ghost if ml != nil && ml != l { unfold ml.Mem(mes, mvs, true) }
@@ -496,7 +496,7 @@ func (l *List) MoveBefore(e, mark *Element /*@ , ghost ml *List, ghost es seq[*E
 	}
 	at := mark.prev
 	//@ fold l.Mem(es, vs, ini)
-	l.move(e, at /*@ , es, vs, i, m-1 @*/ )
+	l.move(e, at /*@ , es, vs, i, m-1 @*/)
 }
 
 // MoveAfter moves element e to its new position after mark.
@@ -505,19 +505,19 @@ func (l *List) MoveBefore(e, mark *Element /*@ , ghost ml *List, ghost es seq[*E
 //
 // e must be an element of l (at ghost index i); the ghost parameters ml,
 // mes, mvs, m describe where mark currently lives, as in Remove.
-//@ requires l.Mem(es, vs, ini)
-//@ requires len(es) == len(vs)
-//@ requires 0 <= i && i < len(es) && es[i] == e
-//@ requires ml == l ==> 0 <= m && m < len(es) && es[m] == mark
-//@ requires ml != l && ml != nil ==> ml.Mem(mes, mvs, true) && 0 <= m && m < len(mes) && mes[m] == mark
-//@ requires ml == nil ==> acc(mark) && mark.list == nil
-//@ ensures  ml == l && i != m ==> l.Mem(moveSeq(es, i, m), moveSeqV(vs, i, m), true)
-//@ ensures  ml == l && i == m ==> l.Mem(es, vs, ini)
-//@ ensures  ml != l ==> l.Mem(es, vs, ini)
-//@ ensures  ml != l && ml != nil ==> ml.Mem(mes, mvs, true)
-//@ ensures  ml == nil ==> acc(mark) && mark.list == nil && mark.next == old(mark.next) && mark.prev == old(mark.prev) && mark.Value === old(mark.Value)
-//@ decreases
-func (l *List) MoveAfter(e, mark *Element /*@ , ghost ml *List, ghost es seq[*Element], ghost vs seq[any], ghost mes seq[*Element], ghost mvs seq[any], ghost i int, ghost m int, ghost ini bool @*/ ) {
+// @ requires l.Mem(es, vs, ini)
+// @ requires len(es) == len(vs)
+// @ requires 0 <= i && i < len(es) && es[i] == e
+// @ requires ml == l ==> 0 <= m && m < len(es) && es[m] == mark
+// @ requires ml != l && ml != nil ==> ml.Mem(mes, mvs, true) && 0 <= m && m < len(mes) && mes[m] == mark
+// @ requires ml == nil ==> acc(mark) && mark.list == nil
+// @ ensures  ml == l && i != m ==> l.Mem(moveSeq(es, i, m), moveSeqV(vs, i, m), true)
+// @ ensures  ml == l && i == m ==> l.Mem(es, vs, ini)
+// @ ensures  ml != l ==> l.Mem(es, vs, ini)
+// @ ensures  ml != l && ml != nil ==> ml.Mem(mes, mvs, true)
+// @ ensures  ml == nil ==> acc(mark) && mark.list == nil && mark.next == old(mark.next) && mark.prev == old(mark.prev) && mark.Value === old(mark.Value)
+// @ decreases
+func (l *List) MoveAfter(e, mark *Element /*@ , ghost ml *List, ghost es seq[*Element], ghost vs seq[any], ghost mes seq[*Element], ghost mvs seq[any], ghost i int, ghost m int, ghost ini bool @*/) {
 	//@ unfold l.Mem(es, vs, ini)
 	//@ assert forall i1, i2 int :: {es[i1], es[i2]} 0 <= i1 && i1 < i2 && i2 < len(es) ==> es[i1] != es[i2]
 	//@ ghost if ml != nil && ml != l { unfold ml.Mem(mes, mvs, true) }
@@ -528,7 +528,7 @@ func (l *List) MoveAfter(e, mark *Element /*@ , ghost ml *List, ghost es seq[*El
 		return
 	}
 	//@ fold l.Mem(es, vs, ini)
-	l.move(e, mark /*@ , es, vs, i, m @*/ )
+	l.move(e, mark /*@ , es, vs, i, m @*/)
 }
 
 // PushBackList inserts a copy of another list at the back of list l.
@@ -536,15 +536,15 @@ func (l *List) MoveAfter(e, mark *Element /*@ , ghost ml *List, ghost es seq[*El
 //
 // The ghost result nes holds the freshly allocated copies appended to l,
 // in order, so that l is abstracted by es ++ nes afterwards.
-//@ requires l.Mem(es, vs, ini)
-//@ requires len(es) == len(vs)
-//@ requires other != l ==> other.Mem(oes, ovs, oini) && len(oes) == len(ovs)
-//@ requires other == l ==> oes == es && ovs == vs
-//@ ensures  l.Mem(es ++ nes, vs ++ ovs, true)
-//@ ensures  len(nes) == len(oes)
-//@ ensures  other != l ==> other.Mem(oes, ovs, oini)
-//@ decreases
-func (l *List) PushBackList(other *List /*@ , ghost es seq[*Element], ghost vs seq[any], ghost oes seq[*Element], ghost ovs seq[any], ghost ini bool, ghost oini bool @*/ ) /*@ (ghost nes seq[*Element]) @*/ {
+// @ requires l.Mem(es, vs, ini)
+// @ requires len(es) == len(vs)
+// @ requires other != l ==> other.Mem(oes, ovs, oini) && len(oes) == len(ovs)
+// @ requires other == l ==> oes == es && ovs == vs
+// @ ensures  l.Mem(es ++ nes, vs ++ ovs, true)
+// @ ensures  len(nes) == len(oes)
+// @ ensures  other != l ==> other.Mem(oes, ovs, oini)
+// @ decreases
+func (l *List) PushBackList(other *List /*@ , ghost es seq[*Element], ghost vs seq[any], ghost oes seq[*Element], ghost ovs seq[any], ghost ini bool, ghost oini bool @*/) /*@ (ghost nes seq[*Element]) @*/ {
 	l.lazyInit( /*@ es, vs, ini @*/ )
 	//@ invariant 0 <= i && i <= len(oes)
 	//@ invariant len(nes) == len(oes) - i
@@ -562,7 +562,7 @@ func (l *List) PushBackList(other *List /*@ , ghost es seq[*Element], ghost vs s
 		//@ unfold l.Mem(es ++ nes, vs ++ ovs[:len(oes)-i], true)
 		at := l.root.prev
 		//@ fold l.Mem(es ++ nes, vs ++ ovs[:len(oes)-i], true)
-		ne := l.insertValue(v, at /*@ , es ++ nes, vs ++ ovs[:len(oes)-i], len(es ++ nes)-1 @*/ )
+		ne := l.insertValue(v, at /*@ , es ++ nes, vs ++ ovs[:len(oes)-i], len(es ++ nes)-1 @*/)
 		_ = ne
 		//@ nes = nes ++ seq[*Element]{ne}
 	}
@@ -573,15 +573,15 @@ func (l *List) PushBackList(other *List /*@ , ghost es seq[*Element], ghost vs s
 //
 // The ghost result nes holds the freshly allocated copies prepended to l,
 // in list order, so that l is abstracted by nes ++ es afterwards.
-//@ requires l.Mem(es, vs, ini)
-//@ requires len(es) == len(vs)
-//@ requires other != l ==> other.Mem(oes, ovs, oini) && len(oes) == len(ovs)
-//@ requires other == l ==> oes == es && ovs == vs
-//@ ensures  l.Mem(nes ++ es, ovs ++ vs, true)
-//@ ensures  len(nes) == len(oes)
-//@ ensures  other != l ==> other.Mem(oes, ovs, oini)
-//@ decreases
-func (l *List) PushFrontList(other *List /*@ , ghost es seq[*Element], ghost vs seq[any], ghost oes seq[*Element], ghost ovs seq[any], ghost ini bool, ghost oini bool @*/ ) /*@ (ghost nes seq[*Element]) @*/ {
+// @ requires l.Mem(es, vs, ini)
+// @ requires len(es) == len(vs)
+// @ requires other != l ==> other.Mem(oes, ovs, oini) && len(oes) == len(ovs)
+// @ requires other == l ==> oes == es && ovs == vs
+// @ ensures  l.Mem(nes ++ es, ovs ++ vs, true)
+// @ ensures  len(nes) == len(oes)
+// @ ensures  other != l ==> other.Mem(oes, ovs, oini)
+// @ decreases
+func (l *List) PushFrontList(other *List /*@ , ghost es seq[*Element], ghost vs seq[any], ghost oes seq[*Element], ghost ovs seq[any], ghost ini bool, ghost oini bool @*/) /*@ (ghost nes seq[*Element]) @*/ {
 	l.lazyInit( /*@ es, vs, ini @*/ )
 	//@ invariant 0 <= i && i <= len(oes)
 	//@ invariant len(nes) == len(oes) - i
@@ -598,7 +598,7 @@ func (l *List) PushFrontList(other *List /*@ , ghost es seq[*Element], ghost vs 
 		//@ ghost if other != l { assert oini }
 		//@ ghost if other != l { fold other.Mem(oes, ovs, oini) }
 		//@ ghost if other == l { fold l.Mem(nes ++ es, ovs[i:] ++ vs, true) }
-		ne := l.insertValue(v, &l.root /*@ , nes ++ es, ovs[i:] ++ vs, -1 @*/ )
+		ne := l.insertValue(v, &l.root /*@ , nes ++ es, ovs[i:] ++ vs, -1 @*/)
 		_ = ne
 		//@ nes = seq[*Element]{ne} ++ nes
 		//@ assert len(nes) > 0 && (nes ++ es)[0] == ne && ne != nil

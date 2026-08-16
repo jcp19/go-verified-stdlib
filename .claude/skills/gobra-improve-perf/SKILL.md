@@ -403,6 +403,21 @@ worth knowing, but prefer renaming when it applies: a helper only fires where
 you mention it, and the terms Silicon generates internally (e.g. `ShArrayloc`
 when computing permissions) will not mention it.
 
+**The same trap in a loop invariant.** Pinning part of an abstraction with
+`s[:k]` or `s[k:]` in an invariant re-derives the slice through those same
+take/drop axioms on every iteration. Track a ghost accumulator and state a
+full-sequence equality instead:
+
+```go
+//@ invariant l.Es() == es0 ++ nes && len(nes) == len(oes0) - i   // cheap
+//@ invariant l.Es()[:len(es0)] == es0                            // diverges
+```
+
+On `container/list` this took `PushFrontList` from not terminating to a
+whole-package run under four minutes, and the accumulator form is the
+*stronger* spec — it names the new elements, which the method returns as a
+ghost result.
+
 ### 6. Borrowed wisdom from Dafny and Verus
 
 These verifiers hit the same wall and document the same cures — useful both as
@@ -428,25 +443,16 @@ The Gobra analogue of "isolate assertions" is `-i file@line` plus `outline`;
 the analogue of `--profile` is a Silicon prover log analyzed for quantifier
 instantiations. The mental model is identical.
 
-### 7. Re-encode the invariant before tuning the backend
+### 7. Reshape the loop invariant
 
-The cheapest large win is often a different way of *saying* the same thing.
-Three re-encodings that repeatedly pay off, in rough order of value:
-
-**Accumulator instead of slice.** Pinning part of an abstraction with `s[:k]`
-or `s[k:]` in a loop invariant drags Silicon's sequence-take/drop axioms into
-every iteration. Track a ghost accumulator and state a full-sequence equality:
-
-```go
-//@ invariant l.Es() == es0 ++ nes && len(nes) == len(oes0) - i   // cheap
-//@ invariant l.Es()[:len(es0)] == es0                            // diverges
-```
+Two invariant rewrites that are about proof *shape* rather than about which
+terms a spec function builds (for that, see §5b):
 
 **Split the invariant by mode instead of relating two structures.** When a
 method can act on its receiver or on a separate object (`other == l` vs
 `other != l`), do not carry one invariant that relates the two abstractions.
 State each mode's fact in its own terms; each is then re-established directly
-by the callee's postcondition:
+by the callee's own postcondition:
 
 ```go
 //@ invariant i > 0 && other != l ==> e == oes0[i-1]                    // index into other
@@ -472,7 +478,7 @@ do the pointer surgery, then `fold`.
 
   A weakened postcondition is the subtler version: still sound, but a spec
   regression, and usually a symptom rather than a cause. Before you drop a
-  clause, re-encode the invariant that supports it (section 7) — in
+  clause, re-encode the invariant that supports it (§5b, §7) — in
   `container/list` the postcondition that "looked too expensive to keep" was
   cheap under a ghost accumulator, and the **stronger** spec verified in 3m41s
   where the weaker one took 5–9 minutes. Stronger does not imply slower.

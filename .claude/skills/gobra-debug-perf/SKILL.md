@@ -257,7 +257,8 @@ full-sequence equality against a ghost accumulator:
 
 In `container/list` this one substitution took `PushFrontList` from "did not
 terminate" to a whole-package run of under four minutes — and the accumulator
-form is the *stronger* spec, since it names the new elements.
+form is the *stronger* spec, since it names the new elements. Same root cause
+as the pure-function case above; `gobra-improve-perf` §5b collects both fixes.
 
 **A quantifier body that mentions a neighbouring index.** In a linked
 structure it is natural to write the linkage as
@@ -347,7 +348,12 @@ trigger in place.
   discharged in milliseconds. This is not a rare edge case; it is the normal
   failure mode of a member that is close to the budget. Use the isolated loop
   for iteration speed, never for the verdict, and re-run the package before
-  believing a fix.
+  believing a fix. When it does happen, rule out the two cheap explanations
+  before rewriting anything: `--chop N` (if chopping changes nothing, the
+  context is not reducible) and a much larger `--packageTimeout` (Silicon
+  verifies members in parallel, so a heavy member can simply be starved on a
+  small machine). In `container/list` both were dead ends, and that is what
+  licensed giving up on flags and re-encoding the invariant instead.
 - **Comparing a run that aborts early against one that completes.** Silicon
   stops a member at its first failing obligation, so a variant that fails
   earlier finishes sooner and looks like a speed-up. Only compare runs that
@@ -371,21 +377,6 @@ trigger in place.
   not guaranteed identical, but stripping does not by itself make the program
   slower. Strip freely to keep debugging; just fix the trigger in the source
   before drawing conclusions about that quantifier specifically.
-#### Isolated-fast, package-slow: what it does and does not mean
-
-A member that verifies under `-i file@line` but diverges in the package run is
-the most confusing case, so rule things out in this order — the first two are
-cheap and both were dead ends in `container/list`:
-
-1. **Context size** — re-run with `--chop N`. If chopping changes nothing, the
-   context is not reducible and the cost is the member's own.
-2. **CPU contention** — Silicon verifies members in parallel; on a small
-   machine a heavy member can simply be starved. Re-run with a much larger
-   `--packageTimeout`. If it still does not finish, it is not scheduling.
-3. **The member's own proof** — which is the usual answer. The slice/chopper
-   evidence is what licenses you to stop tuning flags and go rewrite the
-   invariant.
-
 ### 6. Get evidence at the Viper / Z3 level when needed
 
 For the top one or two members, run Silicon directly on the dumped `.vpr` — it

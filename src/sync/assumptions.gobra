@@ -7,6 +7,51 @@
 
 package sync
 
+// Everything package sync takes on faith. Nothing else in this package is
+// trusted, and there is exactly one `assume` statement in mutex.go (the waiter
+// count overflow, documented at its use site), so this file plus that statement
+// is the complete trusted base of the sync.Mutex proof.
+//
+// Two groups:
+//
+//   1. bitsLemma, the axiomatisation of Mutex.state's bit layout. Gobra encodes
+//      &, |, &^ and >> on non-constant operands as uninterpreted functions, so
+//      nothing about mutex.go's bit twiddling reaches the solver without it.
+//      Every clause is a concrete arithmetic identity that can be checked by
+//      inspection.
+//   2. The runtime primitives package sync links against. They are implemented
+//      in package runtime, so there is no Go code here for Gobra to verify.
+
+// bitsLemma is the axiomatisation of mutex.go's bit layout.
+ghost
+trusted
+requires 0 <= s
+ensures  0 <= bitLocked(s) && bitLocked(s) <= 1
+ensures  0 <= bitWoken(s) && bitWoken(s) <= 1
+ensures  0 <= bitStarving(s) && bitStarving(s) <= 1
+ensures  0 <= numWaiters(s)
+ensures  s == bitLocked(s) + 2*bitWoken(s) + 4*bitStarving(s) + 8*numWaiters(s)
+// masks
+ensures  s & mutexLocked == bitLocked(s)
+ensures  s & mutexWoken == 2*bitWoken(s)
+ensures  s & mutexStarving == 4*bitStarving(s)
+ensures  s & (mutexLocked|mutexWoken) == bitLocked(s) + 2*bitWoken(s)
+ensures  s & (mutexLocked|mutexStarving) == bitLocked(s) + 4*bitStarving(s)
+ensures  s & (mutexLocked|mutexWoken|mutexStarving) == bitLocked(s) + 2*bitWoken(s) + 4*bitStarving(s)
+// shift
+ensures  s >> mutexWaiterShift == numWaiters(s)
+// bit setting and clearing
+ensures  s | mutexLocked == 1 + 2*bitWoken(s) + 4*bitStarving(s) + 8*numWaiters(s)
+ensures  s | mutexWoken == bitLocked(s) + 2 + 4*bitStarving(s) + 8*numWaiters(s)
+ensures  s | mutexStarving == bitLocked(s) + 2*bitWoken(s) + 4 + 8*numWaiters(s)
+ensures  s &^ mutexWoken == bitLocked(s) + 4*bitStarving(s) + 8*numWaiters(s)
+// Gobra folds constant & and |, but not <<: `1 << mutexWaiterShift` stays an
+// uninterpreted term, so its value has to be stated here as well.
+ensures  1 << mutexWaiterShift == 8
+decreases
+func bitsLemma(s int32)
+
+
 // This file specifies the runtime primitives that package sync links against.
 // They are declared (without a body) in runtime.go and implemented in package
 // runtime, so there is nothing here for Gobra to verify: the contracts below

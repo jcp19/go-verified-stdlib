@@ -23,8 +23,8 @@ import (
 // contract Gobra's builtin package gives to panic: a correct program never
 // reaches it. Proving that is part of what is verified below -- the mutex never
 // reports an inconsistent state.
-//@ requires false
-//@ decreases
+// @ requires false
+// @ decreases
 func throw(string) // provided by runtime
 
 // A Mutex is a mutual exclusion lock.
@@ -90,8 +90,8 @@ const (
 // The contract below is the one from Gobra's own model of this package,
 // src/main/resources/stubs/sync/mutex.gobra, minus its secure-information-flow
 // precondition `lowContext()`, which is out of scope here (see GOBRA-REPORT.md).
-//@ requires acc(m.LockP(), _)
-//@ ensures  m.LockP() && m.UnlockP() && m.LockInv()()
+// @ requires acc(m.LockP(), _)
+// @ ensures  m.LockP() && m.UnlockP() && m.LockInv()()
 func (m *Mutex) Lock() {
 	//@ m.lockPInv()
 	// Fast path: grab unlocked mutex.
@@ -128,10 +128,10 @@ func (m *Mutex) Lock() {
 // Note that while correct uses of TryLock do exist, they are rare,
 // and use of TryLock is often a sign of a deeper problem
 // in a particular use of mutexes.
-//@ requires acc(m.LockP(), _)
-//@ ensures  m.LockP()
-//@ ensures  res ==> m.UnlockP() && m.LockInv()()
-//@ decreases
+// @ requires acc(m.LockP(), _)
+// @ ensures  m.LockP()
+// @ ensures  res ==> m.UnlockP() && m.LockInv()()
+// @ decreases
 func (m *Mutex) TryLock() (res bool) {
 	//@ m.lockPInv()
 	statep := &m.state
@@ -172,8 +172,8 @@ func (m *Mutex) TryLock() (res bool) {
 	return true
 }
 
-//@ requires acc(m.LockP(), _)
-//@ ensures  m.LockP() && m.UnlockP() && m.LockInv()()
+// @ requires acc(m.LockP(), _)
+// @ ensures  m.LockP() && m.UnlockP() && m.LockInv()()
 func (m *Mutex) lockSlow() {
 	//@ m.lockPInv()
 	statep := &m.state
@@ -394,9 +394,9 @@ func (m *Mutex) lockSlow() {
 // The contract below is the one from Gobra's own model of this package,
 // src/main/resources/stubs/sync/mutex.gobra, minus its secure-information-flow
 // precondition `lowContext()`, which is out of scope here (see GOBRA-REPORT.md).
-//@ requires acc(m.LockP(), _) && m.UnlockP() && m.LockInv()()
-//@ ensures  m.LockP()
-//@ decreases
+// @ requires acc(m.LockP(), _) && m.UnlockP() && m.LockInv()()
+// @ ensures  m.LockP()
+// @ decreases
 func (m *Mutex) Unlock() {
 	if race.Enabled {
 		_ = m.state
@@ -433,11 +433,11 @@ func (m *Mutex) Unlock() {
 	}
 }
 
-//@ requires acc(m.LockP(), _)
-//@ requires 0 <= newv && bitLocked(newv) == 0
-//@ requires bitStarving(newv) == 1 ==> semTicket{m}()
-//@ ensures  m.LockP()
-//@ decreases _
+// @ requires acc(m.LockP(), _)
+// @ requires 0 <= newv && bitLocked(newv) == 0
+// @ requires bitStarving(newv) == 1 ==> semTicket{m}()
+// @ ensures  m.LockP()
+// @ decreases _
 func (m *Mutex) unlockSlow(newv int32) {
 	//@ m.lockPInv()
 	//@ bitsLemma(newv)

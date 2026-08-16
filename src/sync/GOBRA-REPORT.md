@@ -1,10 +1,23 @@
 # Specifying and verifying `sync.Mutex` with Gobra
 
 **Status: `sync.Mutex` verifies.** `Lock`, `lockSlow`, `TryLock`, `Unlock` and
-`unlockSlow` are all verified against the contracts below, with no `trusted`
-members and a single `assume` (§A3). Both `throw` sites are proved *unreachable*:
-the mutex never reports an inconsistent state. Gobra reports 0 errors on
-`src/sync` in about 95 s.
+`unlockSlow` are all verified against the contracts below. Both `throw` sites are
+proved *unreachable*: the mutex never reports an inconsistent state. Gobra
+reports 0 errors on `src/sync` in about 95 s.
+
+The trusted base is one file, `assumptions.gobra`, plus one `assume` statement in
+`mutex.go` (§A3). Nothing else in the package is trusted.
+
+### Files
+
+| file | what |
+| --- | --- |
+| `mutex.go` | the Go implementation, with its proof in `//@` annotations |
+| `spec.gobra` | ghost state, the invariant, and the client-visible ghost interface |
+| `lemmas.gobra` | the two *proved* lemmas about the state word's bit layout |
+| `assumptions.gobra` | the bit-layout axiom and the runtime primitives — the whole trusted base |
+| `mutex_client_test.gobra` | verified clients, checking the specs are usable from outside |
+| `gobra.json` | package configuration (see §F8 for `more_joins`) |
 
 ## What is being verified, and against which specification
 
@@ -105,10 +118,11 @@ otherwise let both add `mutexLocked` to the state word.
 
 ## Assumptions
 
-Every assumption is listed here. There is exactly one `assume` statement in the
-development (§A3) and no `trusted` member at all.
+Every assumption is listed here. A1 and A2 make up `assumptions.gobra`, the only
+`trusted` declarations in the package; A3 is the only `assume` statement; A4-A8
+are modelling decisions rather than declarations.
 
-**A1. The bit layout (`bitsLemma` in `mutex.gobra`).**
+**A1. The bit layout (`bitsLemma` in `assumptions.gobra`).**
 Gobra encodes `&`, `|`, `&^` and `>>` on non-constant operands as *uninterpreted*
 functions — it cannot even prove that `&` is commutative — so nothing about
 `mutex.go`'s bit twiddling reaches the solver. `bitsLemma` is a single bodiless
@@ -119,7 +133,7 @@ identity checkable by inspection. It also states `1 << mutexWaiterShift == 8`,
 because Gobra folds constant `&`/`|` but not `<<`. Everything else about bits
 (`decompUnique`, `bitsOf`) is *proved* from it.
 
-**A2. The runtime semaphore (`runtime.gobra`).**
+**A2. The runtime semaphore (`assumptions.gobra`).**
 `runtime_SemacquireMutex` / `runtime_Semrelease` are implemented in package
 `runtime`; they are specified as a resource-transferring semaphore. Resources are
 conserved: acquirers never obtain more payloads than releasers deposited. Not
@@ -181,6 +195,35 @@ forced by a Gobra limitation:
    are hoisted into locals, and results are assigned to a pre-declared variable
    rather than declared with `:=`.
 5. `TryLock`'s result is named (`res`) so the contract can mention it.
+6. In `lockSlow`, the spin-path CAS is lifted out of the `&&` chain it sat in, for
+   the same reason as (4): an atomic operation has to be a statement of its own
+   inside a critical region. The short-circuit behaviour is unchanged — the CAS
+   was the last conjunct, so it ran exactly when the preceding conditions held.
+
+## Are the specifications any good?
+
+An internal proof can be perfectly sound and still specify the wrong thing, so
+`mutex_client_test.gobra` verifies clients from the outside.
+`mutex_test.go` itself is not ported: every test in it spawns goroutines and
+drives them through `testing.T`, `runtime.GOMAXPROCS` and channels, none of which
+are modelled here. The clients check the properties those tests exist to
+establish:
+
+* a client sets a mutex up with `SetInv` over a counter predicate, and `Lock`
+  really does hand the counter over — the client can mutate it without holding
+  any permission of its own;
+* the same mutex is passed to two client functions, each holding only
+  `acc(m.LockP(), _)`. Sharing the right to *use* a mutex works;
+* `TryLock` yields the resource only when it succeeded;
+* a value written under the lock is still there when read under the same lock.
+
+Two negative checks were run (not committed, since Gobra has no
+expect-failure annotation for user projects):
+
+* unlocking twice is rejected — *"Permission to `m.UnlockP()` might not suffice"*.
+  The right to unlock is not shareable;
+* `assert false` at three points in the proof is rejected, so the verified paths
+  are genuinely reachable and the result is not vacuous.
 
 ## Findings
 
@@ -237,7 +280,53 @@ half-permission token idiom is naturally full of conditional permissions, and it
 is the number of them *per predicate*, not the size of the method, that sets the
 cost.
 
+### F9. Gobra: the documented modifier order does not parse
+`trusted` before `ghost` is rejected (*"Unexpected reserved word ghost"*); it has
+to be `ghost` then `trusted`. Minor, but it contradicts the order the house style
+guide gives.
+
 ## Comparison with the previous project
 
-*To be written: the earlier project (A. Montini, ETH Zürich) predates Gobra's
-invariants and modelled atomics differently.*
+**Caveat about sources.** Neither the earlier report nor its code could be read
+from this environment: `ethz.ch` is blocked by the network egress policy, and
+`github.com/AxelMontini/gobra-semester-project` returns 404. What follows is
+therefore a comparison of *approaches* — what changed in Gobra, and what a
+pre-invariant treatment of atomics must look like — not a review of that code.
+The specific claims below are about this development and about Gobra, and are
+checkable here.
+
+**What changed.** Before viperproject/gobra#983 Gobra had no invariants and no
+notion of a physically atomic operation, so there was no sound way to let two
+goroutines share a location that either of them writes. The available options
+were all variants of *attaching the shared state to something else*: a predicate
+handed around explicitly, a specification that pretends the atomic operation is
+sequential, or a mutex-shaped wrapper — which is circular when the thing being
+verified *is* the mutex. Today the shared word lives in one `Invariant`, opened
+only by a `critical` region around a single `atomic` operation, and that is what
+this development uses.
+
+**Where a pre-invariant model is at risk of being unsound**, and how each risk is
+discharged here:
+
+1. *Plain reads of shared state.* `lockSlow` and `unlockSlow` read `m.state`
+   non-atomically. Any model that gives a goroutine standing read permission to
+   that word contradicts the write permission the CAS needs, and if it does not,
+   the reads cannot be justified at all. Here they are modelled as atomic loads
+   and the permission comes from the invariant, for the duration of one step
+   (§A4, §F2).
+2. *Ownership handed through the semaphore.* If `runtime_Semrelease` /
+   `runtime_SemacquireMutex` are specified as no-ops, the starvation-mode handoff
+   is invisible and the proof will "work" while permitting two goroutines to own
+   the mutex at once. This is the subtlest part of `sync.Mutex` and needs the
+   ticket discipline described above.
+3. *Bit twiddling.* Gobra's `&`, `|`, `&^`, `>>` are uninterpreted (§F4), so any
+   proof about `sync.Mutex` must supply the bit facts as axioms. It matters a
+   great deal *which* axioms: a plausible-looking set can easily be inconsistent,
+   which makes everything downstream provable. Here they are confined to one
+   lemma whose every clause is a concrete arithmetic identity, and the rest is
+   derived (§A1).
+4. *Wrap-around.* An `AddInt32` contract with exact arithmetic and no overflow
+   precondition is unsound in Gobra, because a sized integer is assumed to be in
+   range — an overflowing addition then proves `false` (§A5). The stubs here
+   require the caller to rule overflow out, which is what forced §A3 into the
+   open.

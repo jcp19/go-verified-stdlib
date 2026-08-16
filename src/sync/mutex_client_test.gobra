@@ -1,0 +1,91 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+package sync
+
+// Clients of sync.Mutex, verified against the contracts proved in mutex.go.
+//
+// mutex_test.go itself is not ported: every one of its tests spawns goroutines
+// and drives them through testing.T, runtime.GOMAXPROCS and channels, none of
+// which are modelled here. What these clients check instead is the property the
+// tests exist to establish, and the one thing a specification can get wrong in a
+// way no amount of internal proof would reveal: that the contracts are usable
+// from the outside, that the lock really hands over the resource it protects,
+// and that the right to use a mutex is shareable while the right to unlock it is
+// not.
+
+type counter struct {
+	n int
+}
+
+// counterInv is the resource this mutex protects: full permission to the
+// counter, plus the property that it never goes negative.
+pred counterInv(c *counter) {
+	acc(&c.n) && 0 <= c.n
+}
+
+// bump is what a goroutine sharing the mutex would run. It only ever holds a
+// wildcard fraction of LockP, which is what makes the mutex shareable; the
+// permission to the counter comes from the lock, not from the caller.
+requires acc(m.LockP(), _)
+requires m.LockInv() == counterInv{c}
+ensures  acc(m.LockP(), _)
+func bump(m *Mutex, c *counter) {
+	m.Lock()
+	// Lock handed over counterInv{c}(), so the counter is ours to mutate.
+	unfold counterInv{c}()
+	assert 0 <= c.n
+	c.n = c.n + 1
+	fold counterInv{c}()
+	m.Unlock()
+}
+
+// tryBump is the same thing through TryLock: the resource arrives only when the
+// attempt succeeded.
+requires acc(m.LockP(), _)
+requires m.LockInv() == counterInv{c}
+ensures  acc(m.LockP(), _)
+decreases
+func tryBump(m *Mutex, c *counter) (ok bool) {
+	ok = m.TryLock()
+	if ok {
+		unfold counterInv{c}()
+		c.n = c.n + 1
+		fold counterInv{c}()
+		m.Unlock()
+	}
+	return ok
+}
+
+// clientShares sets a mutex up and hands the same lock to two clients, which is
+// only possible because LockP is held at a wildcard fraction.
+func clientShares() {
+	c@ := counter{n: 0}
+	m@ := Mutex{}
+
+	fold counterInv{&c}()
+	(&m).SetInv(counterInv{&c})
+
+	bump(&m, &c)
+	tryBump(&m, &c)
+	bump(&m, &c)
+}
+
+// clientCriticalSection checks that the critical section really is one: the
+// value written under the lock is still there when it is read under the same
+// lock, because nothing else can hold counterInv{c}() in between.
+requires acc(m.LockP(), _)
+requires m.LockInv() == counterInv{c}
+ensures  acc(m.LockP(), _)
+func clientCriticalSection(m *Mutex, c *counter) {
+	m.Lock()
+	unfold counterInv{c}()
+	c.n = 7
+	assert c.n == 7
+	fold counterInv{c}()
+	m.Unlock()
+}

@@ -104,6 +104,27 @@ Viper programs with smaller contexts. Useful to confirm that context size (not
 the member itself) is the problem: if the sum of the parts is much faster than
 the whole, irrelevant context is your bottleneck.
 
+#### Inside the member: `assume false`
+
+`assume false` is the same idea one level down, and it is not only a tool for
+hangs (step 7). Everything after it verifies vacuously, so a run reports the
+cost and the errors of the **prefix alone**. Three uses, all cheap:
+
+- **Cost profile.** Walk it down the body and diff the run times. That turns
+  "this member takes 15 minutes somewhere" into a per-region number — and the
+  region where the time jumps is usually not the one you would have guessed.
+- **Which obligations already hold.** Put it at the top of a loop body and
+  every loop-free path — the early returns and their postconditions, the
+  invariant's establishment, the exit — is checked on its own. That answers
+  "does this postcondition hold on the `return 0` path?" with evidence instead
+  of an argument, in one run.
+- **Splitting a failure from a slowdown.** If the prefix is fast and correct,
+  whatever you are chasing is downstream of the cut.
+
+It costs one run per position, so bisect rather than scan, and remember the
+results are only about the prefix: a variant that cuts earlier finishes sooner
+for a trivial reason.
+
 ### 4. Get per-query data for the slow member
 
 The question that classifies almost every bottleneck is: **many cheap queries,
@@ -269,6 +290,15 @@ are also fine. `gobra-improve-perf` has the fix.
 
 #### Ways to fool yourself while measuring
 
+- **Reading a green isolated run as a green package run.** `-i file@line`
+  verifies the chopper's slice for that member, and a slice is a *smaller*
+  proof context than the package — it drops the axioms of every member the
+  target cannot depend on. So a member can verify in isolation and still blow
+  the assert budget in the package run, at an assertion the isolated run
+  discharged in milliseconds. This is not a rare edge case; it is the normal
+  failure mode of a member that is close to the budget. Use the isolated loop
+  for iteration speed, never for the verdict, and re-run the package before
+  believing a fix.
 - **Comparing a run that aborts early against one that completes.** Silicon
   stops a member at its first failing obligation, so a variant that fails
   earlier finishes sooner and looks like a speed-up. Only compare runs that

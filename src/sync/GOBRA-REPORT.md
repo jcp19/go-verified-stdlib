@@ -203,11 +203,22 @@ forced by a Gobra limitation:
 ## Are the specifications any good?
 
 An internal proof can be perfectly sound and still specify the wrong thing, so
-`mutex_client_test.gobra` verifies clients from the outside.
-`mutex_test.go` itself is not ported: every test in it spawns goroutines and
-drives them through `testing.T`, `runtime.GOMAXPROCS` and channels, none of which
-are modelled here. The clients check the properties those tests exist to
-establish:
+the specification is exercised from the outside in two files.
+
+`mutex_test.gobra` ports `TestMutex` and `HammerMutex` from `mutex_test.go` under
+the usual transformation — drop the `testing.T` parameter, turn each call into
+the testing framework into an `assert`. Nothing else about them changes: the
+ported `TestMutex` still starts ten goroutines running `HammerMutex`, each doing
+a thousand `Lock`/`Unlock`/`TryLock` rounds, and still joins them over a channel.
+All of that verifies. **One assertion does not, and it is a genuine gap in the
+specification rather than in the proof — see F10.** The tests that are not
+ported, and why, are listed at the bottom of that file: `TestMutexMisuse` forks a
+subprocess, `TestMutexFairness` measures wall-clock latency, `TestSemaphore`
+needs a semaphore that starts with a token outstanding, and the benchmarks drive
+`testing.B`.
+
+`mutex_client_test.gobra` adds clients written from scratch, checking the
+properties the tests exist to establish:
 
 * a client sets a mutex up with `SetInv` over a counter predicate, and `Lock`
   really does hand the counter over — the client can mutate it without holding
@@ -279,6 +290,29 @@ in `src/sync/gobra.json` — join at impure branch points — brings it back to
 half-permission token idiom is naturally full of conditional permissions, and it
 is the number of them *per predicate*, not the size of the method, that sets the
 cost.
+
+### F10. The specification cannot say that a mutex is unshared
+`TestMutex` checks two things about `TryLock`, and only one of them is provable.
+
+That `TryLock` *fails* while the caller holds the lock does verify, with a hint:
+if it had succeeded the caller would hold the lock invariant twice, and a lock
+invariant worth having is not duplicable. (Note the dependency — for a mutex
+protecting `PredTrue{}` the assertion is unprovable, because two copies of
+nothing are still nothing.)
+
+That `TryLock` *succeeds* on an uncontended mutex does not verify, and no proof
+hint helps. The gap is structural. `Lock`'s contract goes from
+`acc(m.LockP(), _)` to `m.LockP()`: a full `LockP` is recoverable from any
+wildcard fraction, which forces `LockP` to be duplicable — as it is here, since
+its body is `Invariant(...)` plus wildcards and pure facts. So a client can never
+hold evidence that nobody else can reach the mutex, not even immediately after
+creating it. From the specification's point of view some other goroutine may
+always be holding the lock, and `TryLock` is entitled to fail.
+
+This is a property of the interface, not of this implementation, and it is worth
+raising against the stub: expressing it would need a second, exclusive flavour of
+`LockP` that a client holds before it shares the mutex and gives up on sharing —
+which is exactly what `SetInv` could return instead of the duplicable one.
 
 ### F9. Gobra: the documented modifier order does not parse
 `trusted` before `ghost` is rejected (*"Unexpected reserved word ghost"*); it has

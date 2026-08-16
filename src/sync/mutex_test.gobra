@@ -1,0 +1,134 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+package sync
+
+// A port of the mutex tests of mutex_test.go, under the usual transformation:
+// the testing.T parameter is dropped and every call into the testing framework
+// becomes an assert. Only TestMutex and HammerMutex are ported; see the bottom
+// of this file for the ones that are not portable and why.
+
+// The tests use `m := new(Mutex)` and never say what the mutex protects, which
+// Gobra requires. cellInv stands in for that: an ordinary, non-duplicable
+// resource, which is what a mutex is for.
+type cell struct {
+	v int
+}
+
+pred cellInv(c *cell) {
+	acc(&c.v)
+}
+
+// The done-channel carries no resources. PredTrue is built in but cannot be
+// partially applied, so the pred(bool) side needs its own trivial predicate.
+pred sentDone(b bool) {
+	true
+}
+
+// HammerMutex is mutex_test.go's HammerMutex verbatim, except that the TryLock
+// result is bound to a variable. Note what it does *not* need to say: it never
+// mentions the lock invariant, because Lock hands it over and Unlock takes it
+// back without the caller ever having to name it.
+requires acc(m.LockP(), _)
+requires acc(cdone.SendChannel(), _)
+requires cdone.SendGivenPerm() == sentDone{_}
+requires cdone.SendGotPerm() == PredTrue{}
+func HammerMutex(m *Mutex, loops int, cdone chan bool) {
+	invariant acc(m.LockP(), _)
+	invariant acc(cdone.SendChannel(), _)
+	invariant cdone.SendGivenPerm() == sentDone{_}
+	invariant cdone.SendGotPerm() == PredTrue{}
+	for i := 0; i < loops; i++ {
+		if i%3 == 0 {
+			ok := m.TryLock()
+			if ok {
+				m.Unlock()
+			}
+			continue
+		}
+		m.Lock()
+		m.Unlock()
+	}
+	fold sentDone{_}(true)
+	cdone <- true
+}
+
+// TestMutex, with t.Fatalf replaced by assert. The runtime.SetMutexProfileFraction
+// calls are dropped: they are profiling setup, not part of what is tested.
+func TestMutex() {
+	m := new(Mutex)
+	c@ := cell{}
+	fold cellInv{&c}()
+	m.SetInv(cellInv{&c})
+
+	m.Lock()
+	ok := m.TryLock()
+	// t.Fatalf("TryLock succeeded with mutex locked")
+	// Proof hint: if TryLock had succeeded we would hold the lock invariant
+	// twice, and cellInv is not duplicable -- two copies are 2x write permission
+	// on the same field.
+	ghost if ok {
+		unfold cellInv{&c}()
+		unfold cellInv{&c}()
+	}
+	assert !ok
+	m.Unlock()
+
+	ok = m.TryLock()
+	// t.Fatalf("TryLock failed with mutex unlocked")
+	//
+	// NOT PROVABLE, and not for want of a proof hint. Nothing in this interface
+	// can say "this mutex is not shared yet", so from the specification's point
+	// of view another goroutine may be holding the lock and TryLock is entitled
+	// to fail. The gap is structural: Lock's contract goes from
+	// `acc(m.LockP(), _)` to `m.LockP()`, i.e. a full LockP is recoverable from
+	// any wildcard fraction, which forces LockP to be duplicable -- so exclusive
+	// use of a mutex can never be claimed, let alone reclaimed. See F10 in
+	// GOBRA-REPORT.md.
+	//
+	//   assert ok
+	//
+	// The rest of the test needs the lock, so take it the way the specification
+	// does allow.
+	if !ok {
+		m.Lock()
+	}
+	m.Unlock()
+
+	cdone := make(chan bool)
+	cdone.Init(sentDone{_}, PredTrue{})
+
+	invariant acc(m.LockP(), _)
+	invariant acc(cdone.SendChannel(), _)
+	invariant cdone.SendGivenPerm() == sentDone{_}
+	invariant cdone.SendGotPerm() == PredTrue{}
+	for i := 0; i < 10; i++ {
+		go HammerMutex(m, 1000, cdone)
+	}
+
+	invariant acc(cdone.RecvChannel(), _)
+	invariant cdone.RecvGivenPerm() == PredTrue{}
+	invariant cdone.RecvGotPerm() == sentDone{_}
+	for i := 0; i < 10; i++ {
+		fold PredTrue{}()
+		<-cdone
+	}
+}
+
+// Not ported, and why:
+//
+//   - TestSemaphore / HammerSemaphore drive a bare *uint32 through
+//     Runtime_Semacquire / Runtime_Semrelease and start it at *s = 1. The
+//     semaphore model in assumptions.gobra fixes the payload of a *zeroed* word,
+//     so it cannot express "this semaphore starts with one token outstanding".
+//   - TestMutexMisuse forks a subprocess with os/exec and checks that it dies.
+//     What it tests -- that unlocking an unlocked mutex is fatal -- is instead
+//     established statically: throw() carries `requires false` and both of its
+//     call sites are proved unreachable.
+//   - TestMutexFairness measures wall-clock latency, which is a liveness
+//     property and outside what Gobra states.
+//   - The benchmarks drive testing.B and b.RunParallel.

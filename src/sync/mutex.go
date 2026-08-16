@@ -87,9 +87,8 @@ const (
 // Lock locks m.
 // If the lock is already in use, the calling goroutine
 // blocks until the mutex is available.
-// The contract below is the one from Gobra's own model of this package,
-// src/main/resources/stubs/sync/mutex.gobra, minus its secure-information-flow
-// precondition `lowContext()`, which is out of scope here (see GOBRA-REPORT.md).
+// The contract is Gobra's own model of this package, stubs/sync/mutex.gobra,
+// minus its information-flow precondition lowContext(); see GOBRA-REPORT.md.
 // @ requires acc(m.LockP(), _)
 // @ ensures  m.LockP() && m.UnlockP() && m.LockInv()()
 func (m *Mutex) Lock() {
@@ -391,9 +390,8 @@ func (m *Mutex) lockSlow() {
 // A locked Mutex is not associated with a particular goroutine.
 // It is allowed for one goroutine to lock a Mutex and then
 // arrange for another goroutine to unlock it.
-// The contract below is the one from Gobra's own model of this package,
-// src/main/resources/stubs/sync/mutex.gobra, minus its secure-information-flow
-// precondition `lowContext()`, which is out of scope here (see GOBRA-REPORT.md).
+// The contract is Gobra's own model of this package, stubs/sync/mutex.gobra,
+// minus its information-flow precondition lowContext(); see GOBRA-REPORT.md.
 // @ requires acc(m.LockP(), _) && m.UnlockP() && m.LockInv()()
 // @ ensures  m.LockP()
 // @ decreases

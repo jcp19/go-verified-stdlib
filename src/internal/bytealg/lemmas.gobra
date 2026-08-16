@@ -154,22 +154,8 @@ func lemmaRKHashRangeCongruence(q, pat seq[byte], j int) {
 	lemmaRKHashRangePointwise(q, pat, j, len(pat))
 }
 
-// lemmaMatchesAtTrue introduces MatchesAt from an established window match.
-ghost
-requires  0 <= j && j+len(pat) <= len(q)
-requires  q[j:j+len(pat)] == pat
-ensures   MatchesAt(q, pat, j)
-decreases
-func lemmaMatchesAtTrue(q, pat seq[byte], j int) {
-	assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==>
-		q[j+m] == q[j:j+len(pat)][m]
-	assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==> q[j+m] == pat[m]
-	lemmaMatchesAtRangeFromPointwise(q, pat, j, len(pat))
-	assert reveal MatchesAt(q, pat, j)
-}
-
 // lemmaMatchesAtTruePointwise introduces MatchesAt from a pointwise window
-// match. Callers prefer this over lemmaMatchesAtTrue: it never mentions
+// match. The pointwise form is what callers want: it never mentions
 // q[j:j+len(pat)], so no Seq_take/Seq_drop terms enter the caller's context.
 ghost
 requires  0 <= j && j+len(pat) <= len(q)
@@ -235,6 +221,93 @@ func lemmaMatchesAtFalseHash(q, pat seq[byte], j int) {
 	lemmaMatchesAtFalseNeq(q, pat, j)
 }
 
+// lemmaNoMatchBeforeExtend extends a "no match before" prefix by one position.
+ghost
+requires  0 <= j && j+len(pat) <= len(q)
+requires  NoMatchBefore(q, pat, j)
+requires  !MatchesAt(q, pat, j)
+ensures   NoMatchBefore(q, pat, j+1)
+decreases
+func lemmaNoMatchBeforeExtend(q, pat seq[byte], j int) {
+	assert reveal NoMatchBefore(q, pat, j+1)
+}
+
+// lemmaMatchesAtFalseHashRange is lemmaMatchesAtFalseHash with the window
+// given by its two endpoints instead of by j and len(pat). That is the shape
+// IndexRabinKarpBytes needs: its rolling-hash invariant is stated over the
+// window q[j:k], and going through len(pat) would leave the caller to prove
+// j+len(pat) == k in a context where that step is not free.
+ghost
+requires  0 <= j && j <= k && k <= len(q) && len(pat) == k-j
+requires  RKHashRange(q, j, k) != RKHashRange(pat, 0, k-j)
+ensures   !MatchesAt(q, pat, j)
+decreases
+func lemmaMatchesAtFalseHashRange(q, pat seq[byte], j, k int) {
+	lemmaMatchesAtFalseHash(q, pat, j)
+}
+
+// The two lemmas below are the interface between IndexRabinKarpBytes and the
+// abstractions above. Both take the window of s as a pair of indices plus the
+// caller's address correspondence between s[lo:hi] and s, and hand back a fact
+// about MatchesAt over seq(s) alone. Two things make that split worth the
+// extra parameters:
+//
+//   - The correspondence has to be a precondition rather than something the
+//     lemma derives: it is what makes the permission for the reslice, and
+//     hence seq(s[lo:hi]), available at all. Deriving it in the body is too
+//     late, since the contract is checked first. It also has to carry the
+//     second trigger, because the pointwise reasoning inside mentions
+//     seq(s)[lo+m] and never &s[lo:hi][m].
+//   - A lemma's proof context is exactly its precondition. Written inline in
+//     the search loop, the same steps are attempted against everything that
+//     loop has accumulated, and the window-equality step then exceeds the
+//     assert budget -- not for want of a fact, but for want of room.
+
+// lemmaMatchesAtWindow: a window of s that equals pat is an occurrence of pat
+// in s at the window's start.
+ghost
+requires  0 < p
+requires  acc(s, p)
+requires  0 <= lo && lo <= hi && hi <= len(s)
+requires  forall k int :: {&s[lo:hi][k]} {seq(s)[lo+k]} 0 <= k && k < hi-lo ==> &s[lo:hi][k] == &s[lo+k]
+requires  len(pat) == hi-lo
+requires  seq(s[lo:hi]) == pat
+ensures   acc(s, p)
+ensures   MatchesAt(seq(s), pat, lo)
+decreases
+func lemmaMatchesAtWindow(s []byte, pat seq[byte], lo, hi int, p perm) {
+	assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==> seq(s)[lo+m] == pat[m]
+	lemmaMatchesAtTruePointwise(seq(s), pat, lo)
+}
+
+// lemmaNoMatchExtendWindow: a window of s that the Rabin-Karp test rejects --
+// either because its hash differs from the pattern's or because the byte
+// comparison failed -- is not an occurrence, so the "no match before" prefix
+// grows past it. The two ways the test can fail are refuted separately: the
+// common one is arithmetic over RKHashRange alone, and only a hash collision
+// has to look at the bytes.
+ghost
+requires  0 < p
+requires  acc(s, p)
+requires  0 <= lo && lo <= hi && hi <= len(s)
+requires  forall k int :: {&s[lo:hi][k]} {seq(s)[lo+k]} 0 <= k && k < hi-lo ==> &s[lo:hi][k] == &s[lo+k]
+requires  len(pat) == hi-lo
+requires  hash == RKHashRange(seq(s), lo, hi)
+requires  hash != RKHashRange(pat, 0, hi-lo) || seq(s[lo:hi]) != pat
+requires  NoMatchBefore(seq(s), pat, lo)
+ensures   acc(s, p)
+ensures   NoMatchBefore(seq(s), pat, lo+1)
+decreases
+func lemmaNoMatchExtendWindow(s []byte, pat seq[byte], lo, hi int, hash uint32, p perm) {
+	if hash != RKHashRange(pat, 0, hi-lo) {
+		lemmaMatchesAtFalseHashRange(seq(s), pat, lo, hi)
+	} else {
+		assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==> seq(s[lo:hi])[m] == seq(s)[lo+m]
+		lemmaMatchesAtFalseWitness(seq(s), pat, seq(s[lo:hi]), lo)
+	}
+	lemmaNoMatchBeforeExtend(seq(s), pat, lo)
+}
+
 // lemmaRKHashStrDropFirst is the string counterpart of
 // lemmaRKHashRangeDropFirst:
 //   RKHashStr(s, lo, hi) == s[lo]*PrimeRK^(hi-lo-1) + RKHashStr(s, lo+1, hi).
@@ -252,3 +325,4 @@ func lemmaRKHashStrDropFirst(s string, lo, hi int) {
 		assert PowRK(PrimeRK, hi-lo-1) == PowRK(PrimeRK, hi-lo-2)*PrimeRK
 	}
 }
+

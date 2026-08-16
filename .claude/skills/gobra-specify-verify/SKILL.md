@@ -149,11 +149,29 @@ Four things to get right, each of which will otherwise cost you a debugging cycl
   conjuncts left to right, so a getter placed before its own predicate cannot
   be framed. `invariant l.Mem()` then `invariant … l.Es() …`, never the reverse.
   (The same applies inside a single `ensures`.)
-- **Read-only methods must say "nothing changed".** With a parameterized
-  predicate, `preserves l.Mem(es, vs, ini)` pinned the values for free.
-  `preserves l.Mem()` does not, so every read-only method and test helper owes
-  an explicit `ensures l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && …`.
-  This is the main ongoing cost of the design; budget for it.
+- **Give read-only methods read permission, and "nothing changed" comes free.**
+  A parameterized `preserves l.Mem(es, vs, ini)` pinned the values in its own
+  arguments; `preserves l.Mem()` does not, so a read-only method that takes the
+  *whole* predicate owes an explicit
+  `ensures l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && …`. Do not pay
+  that: ask for a share instead.
+
+  ```go
+  // ✗ takes everything, so it must spell out that it changed nothing
+  // @ preserves l.Mem()
+  // @ ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
+  // @ ensures   len(l.Es()) > 0 ==> ret == l.Es()[0]
+
+  // ✓ caller keeps a share and frames the list itself
+  // @ preserves acc(l.Mem(), R)
+  // @ ensures   len(old(l.Es())) > 0 ==> ret == old(l.Es())[0]
+  ```
+
+  with `ghost const R perm = 1/1000` in `spec.gobra` (see `gobra-review-code`
+  §4.3). Callers holding the full predicate need no changes at all. One
+  wrinkle: once the framing clause is gone, the post-state length is
+  unconstrained, so a postcondition indexing by a ghost index must say
+  `old(l.Es())[i]` — that index named a pre-state position anyway.
 - **Export relations that contracts depend on.** A fact sealed in the folded
   predicate is invisible to well-formedness checks. If contracts index into
   `Vs()`, the getter must carry the length relation:

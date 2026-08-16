@@ -392,6 +392,14 @@ proof below it may need the same treatment. That is a real diff, so propose it w
 function is genuinely read-only and part of an API, and skip it for a package-private helper
 with one caller.
 
+One follow-on to expect when you also delete the now-redundant "nothing moved"
+postcondition: it was holding the post-state abstraction to the pre-state one, and a
+postcondition that indexes by a ghost parameter was relying on that link for its
+*well-formedness*. `ensures i > 0 ==> ret == l.Es()[i-1]` stops being well-formed once the
+link is gone, because nothing bounds `len(l.Es())` in the post-state. Index the pre-state
+instead — `old(l.Es())[i-1]` — which is what the contract meant anyway, since `i` names a
+pre-state position.
+
 #### Why not `acc(x, _)`
 
 The wildcard is the tempting shortcut, and it breaks callers in a way a constant does not:
@@ -540,10 +548,15 @@ pure func (l *List) Es() seq[*Element] { … }         // must be exported: cont
 
 Two things to check on such a package:
 
-- **Read-only methods that forget "nothing changed".** `preserves l.Mem()` no
-  longer pins the abstraction, so a getter-based contract needs an explicit
-  `ensures l.Es() == old(l.Es()) && …`. Its absence is a real spec gap: a
-  client calling `Front()` loses everything it knew about the list.
+- **A read-only method that takes the whole predicate.** `preserves l.Mem()`
+  does not pin the abstraction the way a parameterized predicate did, so such
+  a method needs an explicit `ensures l.Es() == old(l.Es()) && …` — without it,
+  a client calling `Front()` loses everything it knew about the list. Read that
+  clause as a **symptom**, not a fix: it exists only because the method asked
+  for `write`. Send the author to §4.3 instead. With `preserves acc(l.Mem(), R)`
+  the caller keeps a share, frames the list itself, and the clause disappears
+  from the contract entirely — in `container/list` this removed it from
+  `Front`, `Back`, `Next` and `Prev` with no change to any caller.
 - **Relations sealed inside the predicate.** If contracts index into a derived
   sequence, the getter should export what makes that well-formed —
   `ensures len(res) == len(l.Es())` — rather than each caller re-proving it.

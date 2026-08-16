@@ -34,44 +34,42 @@ type Element struct {
 // The ghost parameters describe where e currently lives: if l is non-nil,
 // e is the element at index i of list l; if l is nil, e is detached (it does
 // not belong to any list) and the caller owns it.
-// @ preserves l != nil ==> l.Mem()
-// @ preserves l == nil ==> acc(e) && e.list == nil
+// @ preserves l != nil ==> acc(l.Mem(), R)
+// @ preserves l == nil ==> acc(e, R) && e.list == nil
 // @ requires  l != nil ==> 0 <= i && i < len(l.Es()) && l.Es()[i] == e
-// @ ensures   l != nil ==> l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
-// @ ensures   l != nil && i < len(l.Es())-1 ==> ret == l.Es()[i+1] && ret != nil
-// @ ensures   l != nil && i == len(l.Es())-1 ==> ret == nil
-// @ ensures   l == nil ==> e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
+// @ ensures   l != nil && i < len(old(l.Es()))-1 ==> ret == old(l.Es())[i+1] && ret != nil
+// @ ensures   l != nil && i == len(old(l.Es()))-1 ==> ret == nil
+// @ ensures   l == nil ==> ret == nil
 // @ decreases
 func (e *Element) Next( /*@ ghost l *List, ghost i int @*/ ) (ret *Element) {
-	//@ ghost if l != nil { unfold l.Mem() }
+	//@ ghost if l != nil { unfold acc(l.Mem(), R) }
 	//@ assert l != nil && i < len(l.es)-1 ==> l.es[i+1] != nil
 	if p := e.next; e.list != nil && p != &e.list.root {
-		//@ ghost if l != nil { fold l.Mem() }
+		//@ ghost if l != nil { fold acc(l.Mem(), R) }
 		return p
 	}
-	//@ ghost if l != nil { fold l.Mem() }
+	//@ ghost if l != nil { fold acc(l.Mem(), R) }
 	return nil
 }
 
 // Prev returns the previous list element or nil.
 //
 // The ghost parameters play the same role as in Next.
-// @ preserves l != nil ==> l.Mem()
-// @ preserves l == nil ==> acc(e) && e.list == nil
+// @ preserves l != nil ==> acc(l.Mem(), R)
+// @ preserves l == nil ==> acc(e, R) && e.list == nil
 // @ requires  l != nil ==> 0 <= i && i < len(l.Es()) && l.Es()[i] == e
-// @ ensures   l != nil ==> l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
-// @ ensures   l != nil && i > 0 ==> ret == l.Es()[i-1] && ret != nil
+// @ ensures   l != nil && i > 0 ==> ret == old(l.Es())[i-1] && ret != nil
 // @ ensures   l != nil && i == 0 ==> ret == nil
-// @ ensures   l == nil ==> e.next == old(e.next) && e.prev == old(e.prev) && e.Value === old(e.Value) && ret == nil
+// @ ensures   l == nil ==> ret == nil
 // @ decreases
 func (e *Element) Prev( /*@ ghost l *List, ghost i int @*/ ) (ret *Element) {
-	//@ ghost if l != nil { unfold l.Mem() }
+	//@ ghost if l != nil { unfold acc(l.Mem(), R) }
 	//@ assert l != nil && i > 0 ==> l.es[i-1] != nil
 	if p := e.prev; e.list != nil && p != &e.list.root {
-		//@ ghost if l != nil { fold l.Mem() }
+		//@ ghost if l != nil { fold acc(l.Mem(), R) }
 		return p
 	}
-	//@ ghost if l != nil { fold l.Mem() }
+	//@ ghost if l != nil { fold acc(l.Mem(), R) }
 	return nil
 }
 
@@ -130,36 +128,34 @@ func (l *List) Len() (res int) {
 }
 
 // Front returns the first element of list l or nil if the list is empty.
-// @ preserves l.Mem()
-// @ ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
+// @ preserves acc(l.Mem(), R)
 // @ ensures   len(l.Es()) > 0 ==> ret == l.Es()[0] && ret != nil
 // @ ensures   len(l.Es()) == 0 ==> ret == nil
 // @ decreases
 func (l *List) Front() (ret *Element) {
-	//@ unfold l.Mem()
+	//@ unfold acc(l.Mem(), R)
 	if l.length == 0 {
-		//@ fold l.Mem()
+		//@ fold acc(l.Mem(), R)
 		return nil
 	}
 	res := l.root.next
-	//@ fold l.Mem()
+	//@ fold acc(l.Mem(), R)
 	return res
 }
 
 // Back returns the last element of list l or nil if the list is empty.
-// @ preserves l.Mem()
-// @ ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
+// @ preserves acc(l.Mem(), R)
 // @ ensures   len(l.Es()) > 0 ==> ret == l.Es()[len(l.Es())-1] && ret != nil
 // @ ensures   len(l.Es()) == 0 ==> ret == nil
 // @ decreases
 func (l *List) Back() (ret *Element) {
-	//@ unfold l.Mem()
+	//@ unfold acc(l.Mem(), R)
 	if l.length == 0 {
-		//@ fold l.Mem()
+		//@ fold acc(l.Mem(), R)
 		return nil
 	}
 	res := l.root.prev
-	//@ fold l.Mem()
+	//@ fold acc(l.Mem(), R)
 	return res
 }
 

@@ -21,6 +21,13 @@
 
 package list
 
+// R is the permission amount this package's public contracts use to stand for
+// read-only access. Read-only methods ask for acc(l.Mem(), R) rather than the
+// whole predicate, so a caller keeps a positive share across the call and can
+// frame the list for free -- which is why those methods carry no "nothing
+// changed" postcondition.
+ghost const R perm = 1/1000
+
 pred (l *List) Mem() {
 	acc(l) &&
 	len(l.es) == len(l.vs) &&

@@ -54,11 +54,17 @@ for clients that need to tell two lists apart.
   predicate has to be listed **first**: `invariant l.Mem()` before any
   `invariant ... l.Es() ...`. Silicon consumes invariant conjuncts left to
   right, so a getter placed ahead of its own predicate cannot be framed.
-- Read-only methods must state `l.Es() == old(l.Es()) && ...` explicitly.
-  With predicate parameters this was implicit in `preserves l.Mem(es, vs, ini)`;
-  with ghost fields the predicate no longer pins the values, so "nothing
-  changed" is now a proof obligation the author writes down. This is the main
-  cost of the ghost-field design.
+- A read-only method should ask for `acc(l.Mem(), R)`, not the whole
+  predicate: `Front`, `Back`, `Next` and `Prev` do. Keeping a share is not
+  only politeness towards callers — it is what makes "nothing changed" free.
+  A caller that retains a positive share frames the list itself, so these
+  methods carry **no** `ensures l.Es() == old(l.Es())` clause at all, and the
+  test file needed no changes when they were introduced. (An earlier revision
+  of this document called those clauses "the main cost of the ghost-field
+  design". That was wrong: they were a symptom of asking for `write`, not of
+  ghost fields.) Their postconditions index `old(l.Es())`, since the ghost
+  index names a pre-state position and the post-state length is unconstrained
+  once the framing clause is gone.
 - `Vs()` exports `len(res) == len(l.Es())` as a postcondition. The relation is
   otherwise sealed inside the folded predicate, and without it every contract
   that indexes into `Vs()` fails its well-formedness check.

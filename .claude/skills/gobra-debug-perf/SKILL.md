@@ -234,10 +234,11 @@ Two tells that you are looking at a timeout rather than a false property:
 - It is the *last* obligation in a long member, where the context is largest.
 
 Confirm by re-running that member with a much larger `assert_timeout`. If it
-then passes, the property holds and the problem is context size. If Z3 instead
-runs for tens of minutes and dies with `ProverInteractionFailed: Interaction
-with prover yielded null` (an out-of-memory kill), more time is not the answer
-either — the encoding has to change.
+then passes, the property holds and the problem is probably context size. If
+Z3 instead runs for tens of minutes and dies with `ProverInteractionFailed:
+Interaction with prover yielded null` (an out-of-memory kill), more time is not
+the answer either — the proof annotations (and potentially the spec) have to
+change.
 
 #### Invalid triggers: Gobra accepts patterns Viper rejects
 

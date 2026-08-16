@@ -1,0 +1,109 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+package sync
+
+// This file specifies the runtime primitives that package sync links against.
+// They are declared (without a body) in runtime.go and implemented in package
+// runtime, so there is nothing here for Gobra to verify: the contracts below
+// are *assumed*. runtime.go itself is not under verification -- it carries no
+// "// +gobra" header -- so these declarations stand in for it. Their signatures
+// are the ones of runtime.go; only parameter names that clash with Gobra
+// keywords were changed.
+//
+// Only the primitives that mutex.go uses are modelled. The notifyList
+// primitives (used by Cond) and the plain runtime_Semacquire are left out
+// until the types they mention are brought under verification.
+
+// ----------------------------------------------------------------------------
+// The semaphore
+//
+// The runtime semaphore is what makes a contended sync.Mutex block instead of
+// spin, and it is the channel through which a starving mutex hands ownership
+// from the unlocking goroutine straight to a waiter. It is specified here as a
+// *resource-transferring* semaphore, the standard separation-logic reading of
+// a counting semaphore:
+//
+//   - `semaphoreSetInv(s, P)` consumes the exclusive right to *s and fixes the
+//     semaphore's payload to be P. From then on `semaphoreP(s)` is knowledge
+//     that s is a semaphore, and it is freely shareable because clients only
+//     ever hold a wildcard fraction of it.
+//   - `runtime_Semrelease` gives one instance of the payload to the semaphore.
+//   - `runtime_SemacquireMutex` takes one instance back out.
+//
+// Resources are therefore conserved: the number of payloads that acquirers
+// obtain never exceeds the number that releasers deposited, which is exactly
+// the guarantee the runtime's counter provides.
+//
+// What this model does *not* capture:
+//
+//   - Blocking and liveness. `runtime_SemacquireMutex` deliberately has no
+//     termination measure: it may block forever, so a caller that needs a
+//     termination proof cannot call it. That is why Lock() carries no
+//     `decreases` while Unlock() does.
+//   - Queue discipline. `lifo` selects LIFO queueing and `handoff` makes the
+//     released token go directly to the first waiter; both affect *which*
+//     goroutine wakes up and how fair the mutex is, not which resources move.
+//     Fairness is a liveness property and is out of scope.
+//   - `skipframes` only influences tracing.
+// ----------------------------------------------------------------------------
+
+// semaphoreP(s) is the (freely shareable) knowledge that s is a semaphore.
+// It is abstract: clients hold it at a wildcard fraction and pass it around.
+pred semaphoreP(s *uint32)
+
+// semaphoreInv(s) is the payload transferred by one unit of the semaphore s.
+ghost
+requires acc(semaphoreP(s), _)
+decreases _
+pure func semaphoreInv(s *uint32) pred()
+
+// semaphoreSetInv turns a freshly zeroed word into a semaphore with payload p.
+// It consumes the permission to *s: from here on the word belongs to the
+// runtime, and no client may read or write it directly.
+ghost
+requires acc(s) && *s == 0
+ensures  semaphoreP(s) && semaphoreInv(s) == p
+decreases
+func semaphoreSetInv(s *uint32, ghost p pred())
+
+// runtime_SemacquireMutex waits until the semaphore has a spare unit and takes
+// it, together with one instance of the payload.
+//
+// It has no termination measure on purpose: it blocks.
+preserves acc(semaphoreP(s), _)
+ensures   semaphoreInv(s)()
+func runtime_SemacquireMutex(s *uint32, lifo bool, skipframes int)
+
+// runtime_Semrelease adds a unit to the semaphore, handing over one instance of
+// the payload, and wakes a waiting goroutine if there is one.
+preserves acc(semaphoreP(s), _)
+requires  semaphoreInv(s)()
+decreases
+func runtime_Semrelease(s *uint32, handoff bool, skipframes int)
+
+// ----------------------------------------------------------------------------
+// Active spinning and the clock
+// ----------------------------------------------------------------------------
+
+// runtime_canSpin reports whether spinning makes sense at the moment. It is a
+// pure scheduling hint: whatever it answers, the caller stays correct.
+decreases
+func runtime_canSpin(i int) bool
+
+// runtime_doSpin does active spinning. It has no effect on the verified state.
+decreases
+func runtime_doSpin()
+
+// runtime_nanotime reads the runtime's monotonic clock. The result is
+// non-negative because the clock counts nanoseconds from a fixed point at or
+// before process start; sync/mutex.go relies on it never returning 0 for a
+// second reading only as a heuristic ("have I waited before?"), never for
+// correctness.
+ensures 0 <= res
+decreases
+func runtime_nanotime() (res int64)

@@ -29,3 +29,9 @@ jobs:
         with:
           configFile: 'src/internal/bytealg'
           timeout: 1h
+
+      - name: Verify package sync
+        uses: viperproject/gobra-action@main
+        with:
+          configFile: 'src/sync'
+          timeout: 1h

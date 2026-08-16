@@ -210,11 +210,96 @@ member ~1.8× slower and did not fix the failure it was aimed at;
 `#backend[moreJoins(impure)]` on the member changed nothing (756s against
 765s) and was reverted.
 
+## Where the time actually goes
+
+Profiled with Silicon's `--recordProofQueries` ([PR #966]) on the dumped Viper
+program, restricted to `IndexRabinKarpBytes`, at the package's own 30s assert
+budget. 2514 solver interactions, 491s of prover time:
+
+| category | queries | time | share |
+|---|---|---|---|
+| `FunctionalCorrectness` | 166 | 406.7s | 82.7% |
+| `Heap` | 339 | 82.6s | 16.8% |
+| `PathInfeasibility` | 56 | 1.0s | 0.2% |
+| `ScopeManagement` | 1856 | 0.5s | 0.1% |
+
+The cost is concentrated to a degree worth stating plainly. **One source
+position accounts for 321s — 65% of all prover time — in five queries**, the
+worst of them 91s and 80s, and those two failed. It is the disjunctive
+precondition of `lemmaNoMatchExtendWindow`:
+
+```go
+requires hash != RKHashRange(pat, 0, hi-lo) || seq(s[lo:hi]) != pat
+```
+
+Proving a disjunction gives Z3 no branch to work on: the call site has to
+derive "hash differs or bytes differ" as one goal from the negated test. This
+is also what makes the run time bimodal (roughly 330s or 750s for the same
+source) — the query sometimes lands inside the budget and sometimes does not.
+
+Note what the table rules out. Branching is not the problem: 1856
+`ScopeManagement` queries cost half a second in total, and `PathInfeasibility`
+one second. This is a handful of genuinely hard goals, not path explosion.
+
+Underneath, an SMTScope trace of one such query shows why they are hard:
+40 seconds of Z3 produced a **2.6 GB** trace, 1.27M instantiations, of which
+668k are quantifier instantiations. `smt-scope redundancy` reports that most
+are duplicates (79–97% for the hot ones) and flags Silicon's own
+`qp.$FVF<Intbyte>-eq-outer` — the quantified-permission field-value-function
+axiom — as a *multiplicative* pattern. The QP inverse-function axioms
+(`Intbyte-invOfFct`, `-fctOfInv`) are among the most instantiated. In other
+words the remaining cost is the standard byte-slice quantified-permission
+problem: three footprints (`s`, `sep`, and the reslice `s[lo:i]`) live at
+once. The documented cure — wrapping the permissions in a predicate that stays
+folded except around the few statements that index the buffer — is a
+package-wide change and has not been attempted here.
+
+Two fixes suggested by this profile were tried and **both made things worse**,
+so neither is in the tree:
+
+- Splitting the disjunction into two lemmas (one per failure mode) selected by
+  a `ghost if` on `h != hashsep`: 1960s and a new failure on the rolling-hash
+  invariant.
+- Replacing the invalid trigger `{seq(s)[lo+k]}` with the valid `{pat[k]}`:
+  578s and a failure on the `NoMatchBefore` invariant. `pat[k]` is a very
+  permissive pattern, and adding it appears to cost more than the dead trigger
+  did. Interestingly, *deleting* the invalid pattern from the dumped Viper
+  program without adding a replacement let standalone Silicon verify the
+  member in 7m24s where the unstripped program failed at 8m22s — but
+  `require_triggers` means that variant cannot be written in the source.
+
+  [PR #966]: https://github.com/viperproject/silicon/pull/966
+
+## Invalid triggers in this package
+
+Gobra does not run Viper's consistency check, so it accepts triggers that
+Silicon rejects and Z3 then ignores. Six of them exist in this package today:
+three instances of `{seq(s)[lo+k]}` and three of the `{q[j+k]}` /
+`{q[j:j+len(pat)][k]}` family. **Arithmetic inside a sequence index is not a
+legal pattern**, not only arithmetic in a slice bound — `Seq_index(q, j+k)` is
+rejected exactly like `Seq_take(Seq_drop(q, j), hi-j)`. `{&s[lo:hi][k]}` is
+fine, because the `sadd` in the address encoding is not the same thing.
+
+They are left in place because every attempt to change them measured worse
+(above), and because each of those quantifiers has a second, valid pattern to
+fall back on — except `lemmaRKHashRangeCongruence`'s, which is effectively
+untriggered. To re-check after any change:
+
+```bash
+gobra <pkg files> --printVpr --noVerify
+silicon --numberOfParallelVerifiers 1 --logLevel ERROR \
+        --includeMethods 'NoSuchMethod' pkg/file.go.vpr   # trigger errors only, ~5s
+```
+
 ## Verification setup
 
 - Config: `src/gobra-mod.json` (module `std`, `only_files_with_header`,
   `require_triggers`, experimental friend clauses) plus the package-local
-  `src/internal/bytealg/gobra.json`.
+  `src/internal/bytealg/gobra.json`, which sets `assert_timeout` and
+  `chop: 5`. Chopping splits the package into at most five Viper programs with
+  smaller contexts: measured 331s / 378s / 728s against 738s / 756s / 765s
+  without it. Given the spread that is suggestive rather than conclusive, but
+  it never measured worse and costs nothing to carry.
 - CI: the `Gobra` workflow verifies the package with
   `viperproject/gobra-action` in config-file mode.
 - Local runs: `java -jar gobra.jar --config <abs-path>/src/internal/bytealg`

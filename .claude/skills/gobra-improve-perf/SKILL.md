@@ -271,6 +271,48 @@ instantiation. This is standard across verifiers, and the advice transfers:
   checker; `assert P by contra { ... }` and `asserting e1 in e2` do work.
 - **Avoid non-linear arithmetic** where you can; prove it in small steps in
   dedicated lemmas. `--disableNL` keeps it out of everything else.
+- **Do not "repair" a rejected trigger by adding a permissive valid one.** When
+  `gobra-debug-perf`'s consistency check reports an invalid pattern, the
+  tempting move is to swap in something that parses. Measured on a Rabin-Karp
+  search: replacing `{seq(s)[lo+k]}` with `{pat[k]}` — a pattern that matches
+  nearly everywhere — took the package from 738s and verifying to 578s and
+  *failing*. Deleting the invalid pattern with no replacement was the variant
+  that helped (standalone Silicon went from failing at 8m22s to verifying in
+  7m24s), which `--requireTriggers` will not let you write if it was the
+  quantifier's only pattern. Treat an invalid trigger as a diagnosis, not a
+  to-do: it tells you the quantifier is firing on something other than what
+  you intended.
+
+### 5c. Never make a caller prove a disjunction
+
+A lemma precondition of the form `A || B` is the single most expensive shape
+found in a real Gobra proof: on a Rabin-Karp search, one such clause was
+**65% of the package's entire prover time** — five queries, 321s, the worst
+91s — and it failed often enough to make the run time bimodal (~330s or ~750s
+for identical source).
+
+The reason is structural. Given a path condition like `!(h == hashsep &&
+Equal(w, sep))`, proving `h != H || seq(w) != pat` is one goal with no branch
+for Z3 to take: it has to connect both disjuncts to the negated conjunction at
+once. Each disjunct *on its own path* is a one-step goal.
+
+The shape to reach for is one lemma per failure mode, selected by a `ghost if`
+on the discriminating condition:
+
+```go
+//@ ghost if h != hashsep {
+//@ 	lemmaExtendByHash(...)     // arithmetic only, no slices
+//@ } else {
+//@ 	lemmaExtendByWindow(...)   // the byte-level path
+//@ }
+```
+
+Be honest about the outcome, though: on that codebase the split *fixed the hot
+query and made the member slower overall* (1960s, new failure elsewhere),
+because the extra branch multiplied the surrounding context. So treat this as
+a strong diagnostic signal — a disjunctive precondition is where to look
+first — and measure the split like any other change rather than assuming it
+wins.
 
 ### 5b. Rewrite the specification, not just the proof
 

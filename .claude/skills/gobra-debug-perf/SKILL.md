@@ -280,13 +280,32 @@ silicon --numberOfParallelVerifiers 1 --logLevel ERROR pkg/file.go.chopped0.vpr
 # "{ ... } is not a valid Trigger (file.vpr@811.17--813.58)"
 ```
 
-The usual cause is **interpreted arithmetic inside the pattern**. `{&s[i-n:i][k]}`
-is rejected because the slice bound `i-n` becomes a subtraction inside the
-trigger term; `{&s[:n][k]}` on the same buffer is accepted because `0` and `n`
-are not arithmetic. Note it is the *bounds*, not the element indexing, and not
-the `sadd` in the encoding of `&x[k]` — both of those appear in accepted
-triggers too. Program-function applications such as `{MatchesAt(q, pat, j)}`
-are also fine. `gobra-improve-perf` has the fix.
+Restricting Silicon to a method that does not exist makes this a ~5s check
+rather than a full verification, since consistency is checked before anything
+is verified:
+
+```bash
+gobra -i <all pkg files> --printVpr --noVerify
+silicon --numberOfParallelVerifiers 1 --logLevel ERROR \
+        --includeMethods 'NoSuchMethod' pkg/file.go.vpr
+```
+
+Worth running once on any package with hand-written triggers: a real one had
+six invalid triggers nobody knew about, one of them the *only* pattern on its
+quantifier.
+
+The cause is **interpreted arithmetic anywhere inside the pattern**.
+`{&s[i-n:i][k]}` is rejected because the slice bound `i-n` is a subtraction
+inside the trigger term, and `{seq(s)[lo+k]}` is rejected too — a sequence
+index `Seq_index(q, lo+k)` is arithmetic exactly like a slice bound
+`Seq_take(Seq_drop(q, j), hi-j)`. What *is* accepted: `{&s[:n][k]}` and
+`{&s[lo:hi][k]}`, because `0`, `n`, `lo`, `hi` are not arithmetic and the
+`sadd` in the encoding of `&x[k]` is not an interpreted operator at the
+pattern level; and program-function applications such as
+`{MatchesAt(q, pat, j)}`. `gobra-improve-perf` has the fix — and the warning
+that "fix" is not automatic: replacing a rejected pattern with a valid but
+very permissive one (`{pat[k]}`) measured *worse* than leaving the dead
+trigger in place.
 
 #### Ways to fool yourself while measuring
 
@@ -369,7 +388,27 @@ approaching ~4 GB. A *prefix* of a trace is valid input, and matching loops
 almost always show up early, so cap the analysis with `SCOPE_SIZE_LIMIT`
 (bytes) / `SCOPE_LINE_LIMIT` (lines) as above — or kill Z3 once the trace is a
 couple of GB and analyze what you have (copy the file before killing Z3; on
-some systems the contents vanish otherwise). Also make sure Gobra's
+some systems the contents vanish otherwise).
+
+**`SCOPE_SIZE_LIMIT` caps what SMTScope reads, not what Z3 writes.** On a
+badly-instantiating member, `z3-scope` will happily let Z3 emit tens of
+gigabytes and then be killed before it analyzes anything — one run produced a
+29.6 GB trace and no output, which on a sandbox with a disk quota is its own
+incident. Bound the *producer* instead, and run the analysis separately:
+
+```bash
+timeout 40 z3 trace=true proof=true trace-file-name=tr.log query-01.smt2
+smt-scope stats tr.log -k 12       # instantiation counts per quantifier
+smt-scope redundancy tr.log        # duplicate ratios; flags multiplicative patterns
+```
+
+40 seconds is enough: a member that is instantiation-bound will have produced
+gigabytes by then, and that fact is itself the measurement. `smt-scope
+redundancy` is the higher-signal of the two — it prints a duplicate ratio per
+quantifier and marks multiplicative patterns explicitly, so
+`qp.$FVF<f>-eq-outer: 820 duplicate, ratio 86.7%! Multiplicative pattern
+(2.3x)!` tells you in one line that quantified permissions, not your own
+quantifiers, are what Z3 is drowning in. Also make sure Gobra's
 `--z3APIMode` is off anywhere in the pipeline: with it there is no separate Z3
 process, hence no `.smt2` file to replay.
 

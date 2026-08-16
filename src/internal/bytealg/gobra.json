@@ -1,3 +1,4 @@
 {
-  "assert_timeout": 30000
+  "assert_timeout": 30000,
+  "chop": 5
 }

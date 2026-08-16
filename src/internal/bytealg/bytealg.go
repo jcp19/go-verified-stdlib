@@ -7,7 +7,7 @@
 
 package bytealg
 
-// NOTE(gobra): the "Offsets into internal/cpu records" constant block and the
+// (Gobra) The "Offsets into internal/cpu records" constant block and the
 // imports of internal/cpu and unsafe were moved, unchanged, to offsets.go:
 // unsafe.Offsetof is not supported by Gobra. See offsets.go.
 
@@ -24,16 +24,15 @@ const PrimeRK = 16777619
 
 // HashStrBytes returns the hash and the appropriate multiplicative
 // factor for use in Rabin-Karp algorithm.
-//@ requires p > 0
+//@ requires  p > 0
 //@ preserves acc(sep, p)
-//@ ensures rhash == RKHash(seq(sep))
-//@ ensures rpow == PowRK(PrimeRK, len(sep))
+//@ ensures   rhash == RKHash(seq(sep))
+//@ ensures   rpow == PowRK(PrimeRK, len(sep))
 //@ decreases
 func HashStrBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 	hash := uint32(0)
 	//@ invariant 0 <= i && i <= len(sep)
-	//@ invariant acc(sep, p)
-	//@ invariant seq(sep) == old(seq(sep))
+	//@ invariant acc(sep, p/2)
 	//@ invariant hash == RKHashRange(seq(sep), 0, i)
 	//@ decreases len(sep) - i
 	for i := 0; i < len(sep); i++ {
@@ -41,9 +40,9 @@ func HashStrBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 		hash = hash*PrimeRK + uint32(sep[i])
 	}
 	var pow, sq uint32 = 1, PrimeRK
-	//@ invariant acc(sep, p)
-	//@ invariant seq(sep) == old(seq(sep))
+	//@ invariant acc(sep, p/2)
 	//@ invariant 0 <= i
+	//@ invariant hash == RKHashRange(seq(sep), 0, len(sep))
 	//@ invariant pow*PowRK(sq, i) == PowRK(PrimeRK, len(sep))
 	//@ decreases i
 	for i := len(sep); i > 0; i >>= 1 {
@@ -59,8 +58,8 @@ func HashStrBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 
 // HashStr returns the hash and the appropriate multiplicative
 // factor for use in Rabin-Karp algorithm.
-//@ ensures rhash == RKHashStr(sep, 0, len(sep))
-//@ ensures rpow == PowRK(PrimeRK, len(sep))
+//@ ensures   rhash == RKHashStr(sep, 0, len(sep))
+//@ ensures   rpow == PowRK(PrimeRK, len(sep))
 //@ decreases
 func HashStr(sep string) (rhash, rpow uint32) {
 	hash := uint32(0)
@@ -87,16 +86,15 @@ func HashStr(sep string) (rhash, rpow uint32) {
 
 // HashStrRevBytes returns the hash of the reverse of sep and the
 // appropriate multiplicative factor for use in Rabin-Karp algorithm.
-//@ requires p > 0
+//@ requires  p > 0
 //@ preserves acc(sep, p)
-//@ ensures rhash == RKHashRev(seq(sep))
-//@ ensures rpow == PowRK(PrimeRK, len(sep))
+//@ ensures   rhash == RKHashRev(seq(sep))
+//@ ensures   rpow == PowRK(PrimeRK, len(sep))
 //@ decreases
 func HashStrRevBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 	hash := uint32(0)
 	//@ invariant -1 <= i && i <= len(sep)-1
-	//@ invariant acc(sep, p)
-	//@ invariant seq(sep) == old(seq(sep))
+	//@ invariant acc(sep, p/2)
 	//@ invariant hash == RKHashRevRange(seq(sep), i+1, len(sep))
 	//@ decreases i + 1
 	for i := len(sep) - 1; i >= 0; i-- {
@@ -104,9 +102,9 @@ func HashStrRevBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 		hash = hash*PrimeRK + uint32(sep[i])
 	}
 	var pow, sq uint32 = 1, PrimeRK
-	//@ invariant acc(sep, p)
-	//@ invariant seq(sep) == old(seq(sep))
+	//@ invariant acc(sep, p/2)
 	//@ invariant 0 <= i
+	//@ invariant hash == RKHashRevRange(seq(sep), 0, len(sep))
 	//@ invariant pow*PowRK(sq, i) == PowRK(PrimeRK, len(sep))
 	//@ decreases i
 	for i := len(sep); i > 0; i >>= 1 {
@@ -122,8 +120,8 @@ func HashStrRevBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 
 // HashStrRev returns the hash of the reverse of sep and the
 // appropriate multiplicative factor for use in Rabin-Karp algorithm.
-//@ ensures rhash == RKHashStrRev(sep, 0, len(sep))
-//@ ensures rpow == PowRK(PrimeRK, len(sep))
+//@ ensures   rhash == RKHashStrRev(sep, 0, len(sep))
+//@ ensures   rpow == PowRK(PrimeRK, len(sep))
 //@ decreases
 func HashStrRev(sep string) (rhash, rpow uint32) {
 	hash := uint32(0)
@@ -150,10 +148,10 @@ func HashStrRev(sep string) (rhash, rpow uint32) {
 
 // IndexRabinKarpBytes uses the Rabin-Karp search algorithm to return the index of the
 // first occurrence of substr in s, or -1 if not present.
-//@ requires p > 0
-//@ requires len(sep) <= len(s)
+//@ requires  p > 0
+//@ requires  len(sep) <= len(s)
 //@ preserves acc(s, p) && acc(sep, p)
-//@ ensures res != -1 ==> 0 <= res && res <= len(s)-len(sep)
+//@ ensures   res != -1 ==> 0 <= res && res <= len(s)-len(sep)
 //@ decreases
 func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	// Rabin-Karp search
@@ -162,7 +160,7 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	n := len(sep)
 	var h uint32
 	//@ invariant 0 <= i && i <= n
-	//@ invariant acc(s, p) && acc(sep, p)
+	//@ invariant acc(s, p/2) && acc(sep, p/2)
 	//@ invariant hashsep == RKHash(seq(sep)) && pow == PowRK(PrimeRK, n)
 	//@ invariant h == RKHashRange(seq(s), 0, i)
 	//@ decreases n - i
@@ -176,7 +174,7 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	//@ assert len(seq(s)) == len(s) && len(seq(sep)) == len(sep)
 	//@ invariant 0 < n
 	//@ invariant n <= i && i <= len(s)
-	//@ invariant acc(s, p) && acc(sep, p)
+	//@ invariant acc(s, p/2) && acc(sep, p/2)
 	//@ invariant hashsep == RKHash(seq(sep)) && pow == PowRK(PrimeRK, n)
 	//@ invariant h == RKHashRange(seq(s), i-n, i)
 	//@ decreases len(s) - i
@@ -185,9 +183,10 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 		h += uint32(s[i])
 		h -= pow * uint32(s[i-n])
 		i++
-		// lo names i-n so the trigger below contains no arithmetic: Viper
-		// rejects {&s[i-n:i][k]} because ssliceFromSlice(s, i-n, i) has an
-		// interpreted subtraction in it, but {&s[lo:i][k]} is a legal pattern.
+		// (Gobra) lo names i-n so the trigger below contains no arithmetic:
+		// Viper rejects {&s[i-n:i][k]} because ssliceFromSlice(s, i-n, i) has
+		// an interpreted subtraction in it, but {&s[lo:i][k]} is a legal
+		// pattern.
 		//@ ghost lo := i - n
 		//@ assert forall k int :: {&s[lo:i][k]} 0 <= k && k < n ==> &s[lo:i][k] == &s[lo+k]
 		if h == hashsep && Equal(s[i-n:i], sep) {
@@ -202,14 +201,14 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 // IndexRabinKarp uses the Rabin-Karp search algorithm to return the index of the
 // first occurrence of substr in s, or -1 if not present.
 //
-// Note on the specification: Gobra models strings abstractly, so the
+// (Gobra) Note on the specification: Gobra models strings abstractly, so the
 // postconditions are stated in terms of StrMatchesAt, which captures exactly
 // the test performed by this function (matching window hash and successful
 // string comparison); see spec.gobra.
-//@ requires len(substr) <= len(s)
-//@ ensures res == -1 ==> forall j int :: {StrMatchesAt(s, substr, j)} 0 <= j && j <= len(s)-len(substr) ==> !StrMatchesAt(s, substr, j)
-//@ ensures res != -1 ==> 0 <= res && res <= len(s)-len(substr) && StrMatchesAt(s, substr, res)
-//@ ensures res != -1 ==> forall j int :: {StrMatchesAt(s, substr, j)} 0 <= j && j < res ==> !StrMatchesAt(s, substr, j)
+//@ requires  len(substr) <= len(s)
+//@ ensures   res == -1 ==> forall j int :: {StrMatchesAt(s, substr, j)} 0 <= j && j <= len(s)-len(substr) ==> !StrMatchesAt(s, substr, j)
+//@ ensures   res != -1 ==> 0 <= res && res <= len(s)-len(substr) && StrMatchesAt(s, substr, res)
+//@ ensures   res != -1 ==> forall j int :: {StrMatchesAt(s, substr, j)} 0 <= j && j < res ==> !StrMatchesAt(s, substr, j)
 //@ decreases
 func IndexRabinKarp(s, substr string) (res int) {
 	// Rabin-Karp search

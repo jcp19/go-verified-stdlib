@@ -21,6 +21,14 @@ abstractions defined in `spec.gobra`:
 | `IndexRabinKarpBytes` | rolling-hash invariant and result bounds; the search-correctness conjuncts are deferred (see Limitations) |
 | `IndexRabinKarp` | first-occurrence contract in terms of `StrMatchesAt` (see below) |
 
+The Gobra sources are split by role:
+
+| File | Holds |
+|---|---|
+| `spec.gobra` | the ghost definitions the contracts are written against |
+| `lemmas.gobra` | the lemmas that discharge proofs about those definitions |
+| `assumptions.gobra` | the trusted members (see Trusted assumptions) |
+
 The abstractions (`spec.gobra`) are: `RKHashRange`/`RKHash` (Rabin-Karp hash of
 a byte-sequence range), `RKHashRevRange`/`RKHashRev` (hash of the reversed
 range), `RKHashStr`/`RKHashStrRev` (the analogues over string ranges), `PowRK`
@@ -57,13 +65,14 @@ usual Gobra convention for read-only slice arguments.
 ## Trusted assumptions
 
 An honest inventory of everything assumed rather than proved
-(`grep -rn trusted src/internal/bytealg`):
+(everything in `assumptions.gobra`; `grep -rn trusted src/internal/bytealg`
+finds nothing outside it):
 
-1. **`Equal` (spec.gobra).** Declared in `equal_native.go` and implemented in
+1. **`Equal` (assumptions.gobra).** Declared in `equal_native.go` and implemented in
    per-architecture assembly, which Gobra cannot verify. Its trusted contract
    states that `Equal(a, b)` returns exactly whether `a` and `b` have the same
    mathematical byte sequence.
-2. **`lemmaBitFacts` (spec.gobra).** States `i>>1 == i/2` and `i&1 == i%2` for
+2. **`lemmaBitFacts` (assumptions.gobra).** States `i>>1 == i/2` and `i&1 == i%2` for
    `i >= 0`. These are true facts of Go's semantics, but Gobra encodes the
    bitwise operators as uninterpreted functions without axioms, so they are
    unprovable inside the tool. They are needed for the
@@ -85,6 +94,8 @@ The implementation logic is unchanged. The full list of code-level edits:
    postconditions can refer to them.
 3. Everything else is comments: `//@`/`/*@ @*/` annotations (contracts, loop
    invariants, ghost lemma calls, proof asserts) and the `// +gobra` header.
+   Plain comments added for verification are prefixed `(Gobra)` so they stay
+   distinguishable from the upstream ones.
 
 ## Limitations
 
@@ -96,7 +107,13 @@ The implementation logic is unchanged. The full list of code-level edits:
   side, this makes the rolling-hash reasoning exact rather than modular.)
 - **Gobra's string model.** Strings are abstract identifiers with only length
   axioms: string slicing/indexing are essentially uninterpreted and there is
-  no extensionality. A pointwise "the bytes match" property is therefore not
+  no extensionality. Nor can a string be turned into a `seq[byte]` in a *pure*
+  context, which is what a specification function needs: the conversion has to
+  go through `[]byte(s)`, which allocates, and Gobra rejects it inside a pure
+  function with "expected pure expression". (It is accepted in impure ghost
+  code, and `s[i]` indexing is fine in pure ghost code — the restriction is
+  specifically the allocating conversion under purity.) A pointwise "the bytes
+  match" property is therefore not
   expressible for `IndexRabinKarp`; `StrMatchesAt` instead captures exactly
   the test the code performs (window hash equal and string comparison
   succeeds). Note the irony that the string version, despite the weaker
@@ -115,9 +132,10 @@ The implementation logic is unchanged. The full list of code-level edits:
   ensures res != -1 ==> NoMatchBefore(seq(s), seq(sep), res)
   ```
 
-  All the machinery for them is present and verified in `spec.gobra` —
-  `MatchesAtRange`, `MatchesAt`, `NoMatchBefore` and seven lemmas, each of
-  which verifies in about 10s in isolation. What does not discharge is their
+  All the machinery for them is present and verified — `MatchesAtRange`,
+  `MatchesAt` and `NoMatchBefore` in `spec.gobra`, plus seven supporting
+  lemmas in `lemmas.gobra`, each of which verifies in about 10s in
+  isolation. What does not discharge is their
   use inside `IndexRabinKarpBytes`, which is a *performance* problem rather
   than a proof gap: every step involved is derivable, and the properties
   themselves hold (the assertion that blocked the loop is literally the loop
@@ -140,14 +158,20 @@ The implementation logic is unchanged. The full list of code-level edits:
   Three encoding changes made while investigating this are kept, because they
   are what would make resuming feasible — together they took the package from
   42m09s to 10m41s with the full spec, and the reduced spec now verifies in
-  about 70s:
+  about 55s:
 
   1. `MatchesAt` is defined via the recursive `MatchesAtRange` instead of
      `q[j:j+len(pat)] == pat`. Sequence slicing encodes to nested
      `Seq_take`/`Seq_drop` terms, which dominated the profile.
-  2. Contracts are stated in a single heap. `preserves acc(s, p)` gives
-     callers value stability by framing, so `ensures seq(s) == old(seq(s))`
-     was redundant, and cross-heap sequence equalities are expensive.
+  2. Contracts and loop invariants are stated in a single heap; `old` does
+     not appear anywhere in `bytealg.go`. `preserves acc(s, p)` gives callers
+     value stability by framing, so `ensures seq(s) == old(seq(s))` was
+     redundant. Inside a function the same trick works against loops: a loop
+     invariant asking for only `acc(sep, p/2)` leaves the other half held
+     outside, which frames the values across the loop and removes the need
+     for `invariant seq(sep) == old(seq(sep))`. Where a fact established
+     before a loop has to survive it, carry the fact in that loop's
+     invariant rather than reaching back to the pre-state.
   3. Quantifier triggers contain no interpreted arithmetic — `ghost lo := i-n`
      makes `{&s[lo:i][k]}` a legal pattern where `{&s[i-n:i][k]}` is not.
      Gobra does not check trigger validity (and `--checkConsistency` conflicts
@@ -166,4 +190,4 @@ The implementation logic is unchanged. The full list of code-level edits:
 - Local runs: `java -jar gobra.jar --config <abs-path>/src/internal/bytealg`
   with Z3 4.8.7. The config path must be absolute; a relative one is resolved
   against the module root and fails with `File 'src/src/.' not found`.
-  The package currently verifies in about 70s.
+  The package currently verifies in about 55s.

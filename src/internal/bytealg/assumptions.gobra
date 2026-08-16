@@ -1,7 +1,3 @@
-// Copyright 2026 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 // Enables Gobra in the current file.
 // +gobra
 
@@ -24,8 +20,8 @@ package bytealg
 // function is its trusted specification: two byte slices are Equal exactly
 // when they have the same (mathematical) sequence of bytes.
 trusted
-requires acc(a) && acc(b)
-ensures res == (seq(a) == seq(b))
+requires  acc(a) && acc(b)
+ensures   res == (seq(a) == seq(b))
 decreases
 pure func Equal(a, b []byte) (res bool)
 
@@ -39,8 +35,8 @@ pure func Equal(a, b []byte) (res bool)
 // remainder modulo two.
 ghost
 trusted
-requires 0 <= i
-ensures i>>1 == i/2
-ensures i&1 == i%2
+requires  0 <= i
+ensures   i>>1 == i/2
+ensures   i&1 == i%2
 decreases
 func lemmaBitFacts(i int)

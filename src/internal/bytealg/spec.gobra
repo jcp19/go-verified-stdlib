@@ -1,7 +1,3 @@
-// Copyright 2026 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 // Enables Gobra in the current file.
 // +gobra
 
@@ -20,8 +16,12 @@
 //   - RKHashRev(q), RKHashRevRange(q, lo, hi)
 //       Rabin-Karp hash of the reverse of a byte sequence (range).
 //   - RKHashStr(s, lo, hi), RKHashStrRev(s, lo, hi)
-//       the analogues for ranges of a string; strings cannot be converted to
-//       sequences in Gobra, so ranges of the original string are used.
+//       the analogues for ranges of a string. A string cannot be turned into
+//       a seq[byte] in a pure context: the conversion has to go through
+//       []byte(s), which allocates, and Gobra rejects it in a pure function
+//       ("expected pure expression"). It is accepted in impure ghost code,
+//       but a pure specification function cannot use it, so these
+//       abstractions range over the original string instead.
 //   - PowRK(b, e)            b to the power of e.
 //   - MatchesAt(q, pat, j)   pat occurs in q at position j.
 //   - StrMatchesAt(s, substr, j)
@@ -39,7 +39,7 @@ package bytealg
 // RKHashRange is the Rabin-Karp hash of the byte range q[lo:hi]:
 //   q[lo]*PrimeRK^(hi-lo-1) + ... + q[hi-2]*PrimeRK + q[hi-1]
 ghost
-requires 0 <= lo && lo <= hi && hi <= len(q)
+requires  0 <= lo && lo <= hi && hi <= len(q)
 decreases hi - lo
 pure func RKHashRange(q seq[byte], lo, hi int) uint32 {
 	return lo == hi ? uint32(0) :
@@ -56,7 +56,7 @@ pure func RKHash(q seq[byte]) uint32 {
 // RKHashRevRange is the Rabin-Karp hash of the reverse of the byte range
 // q[lo:hi].
 ghost
-requires 0 <= lo && lo <= hi && hi <= len(q)
+requires  0 <= lo && lo <= hi && hi <= len(q)
 decreases hi - lo
 pure func RKHashRevRange(q seq[byte], lo, hi int) uint32 {
 	return lo == hi ? uint32(0) :
@@ -72,7 +72,7 @@ pure func RKHashRev(q seq[byte]) uint32 {
 
 // RKHashStr is the Rabin-Karp hash of the byte range s[lo:hi] of string s.
 ghost
-requires 0 <= lo && lo <= hi && hi <= len(s)
+requires  0 <= lo && lo <= hi && hi <= len(s)
 decreases hi - lo
 pure func RKHashStr(s string, lo, hi int) uint32 {
 	return lo == hi ? uint32(0) :
@@ -82,7 +82,7 @@ pure func RKHashStr(s string, lo, hi int) uint32 {
 // RKHashStrRev is the Rabin-Karp hash of the reverse of the byte range
 // s[lo:hi] of string s.
 ghost
-requires 0 <= lo && lo <= hi && hi <= len(s)
+requires  0 <= lo && lo <= hi && hi <= len(s)
 decreases hi - lo
 pure func RKHashStrRev(s string, lo, hi int) uint32 {
 	return lo == hi ? uint32(0) :
@@ -91,7 +91,7 @@ pure func RKHashStrRev(s string, lo, hi int) uint32 {
 
 // PowRK is b to the power of e.
 ghost
-requires 0 <= e
+requires  0 <= e
 decreases e
 pure func PowRK(b uint32, e int) uint32 {
 	return e == 0 ? uint32(1) : PowRK(b, e-1) * b
@@ -103,7 +103,7 @@ pure func PowRK(b uint32, e int) uint32 {
 // equalities over those are by far the most expensive obligations in this
 // package.
 ghost
-requires 0 <= j && 0 <= k && k <= len(pat) && j+k <= len(q)
+requires  0 <= j && 0 <= k && k <= len(pat) && j+k <= len(q)
 decreases k
 pure func MatchesAtRange(q, pat seq[byte], j, k int) bool {
 	return k == 0 ? true :
@@ -112,7 +112,7 @@ pure func MatchesAtRange(q, pat seq[byte], j, k int) bool {
 
 // MatchesAt states that the pattern pat occurs in q at position j.
 ghost
-requires 0 <= j && j+len(pat) <= len(q)
+requires  0 <= j && j+len(pat) <= len(q)
 decreases
 opaque
 pure func MatchesAt(q, pat seq[byte], j int) bool {
@@ -127,7 +127,7 @@ pure func MatchesAt(q, pat seq[byte], j int) bool {
 // hash matches and the string comparison s[j:j+len(substr)] == substr
 // succeeds.
 ghost
-requires 0 <= j && j+len(substr) <= len(s)
+requires  0 <= j && j+len(substr) <= len(s)
 decreases
 pure func StrMatchesAt(s, substr string, j int) bool {
 	return RKHashStr(s, j, j+len(substr)) == RKHashStr(substr, 0, len(substr)) &&
@@ -142,7 +142,7 @@ pure func StrMatchesAt(s, substr string, j int) bool {
 // whereas quantified facts over the heap-dependent seq(s)/seq(sep) terms do
 // not reliably re-trigger there.
 ghost
-requires 0 <= hi && hi-1+len(pat) <= len(q)
+requires  0 <= hi && hi-1+len(pat) <= len(q)
 decreases hi
 opaque
 pure func NoMatchBefore(q, pat seq[byte], hi int) bool {

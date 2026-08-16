@@ -24,11 +24,11 @@ const PrimeRK = 16777619
 
 // HashStrBytes returns the hash and the appropriate multiplicative
 // factor for use in Rabin-Karp algorithm.
-//@ requires  p > 0
-//@ preserves acc(sep, p)
-//@ ensures   rhash == RKHash(seq(sep))
-//@ ensures   rpow == PowRK(PrimeRK, len(sep))
-//@ decreases
+// @ requires  p > 0
+// @ preserves acc(sep, p)
+// @ ensures   rhash == RKHash(seq(sep))
+// @ ensures   rpow == PowRK(PrimeRK, len(sep))
+// @ decreases
 func HashStrBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 	hash := uint32(0)
 	//@ invariant 0 <= i && i <= len(sep)
@@ -58,9 +58,9 @@ func HashStrBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 
 // HashStr returns the hash and the appropriate multiplicative
 // factor for use in Rabin-Karp algorithm.
-//@ ensures   rhash == RKHashStr(sep, 0, len(sep))
-//@ ensures   rpow == PowRK(PrimeRK, len(sep))
-//@ decreases
+// @ ensures   rhash == RKHashStr(sep, 0, len(sep))
+// @ ensures   rpow == PowRK(PrimeRK, len(sep))
+// @ decreases
 func HashStr(sep string) (rhash, rpow uint32) {
 	hash := uint32(0)
 	//@ invariant 0 <= i && i <= len(sep)
@@ -86,11 +86,11 @@ func HashStr(sep string) (rhash, rpow uint32) {
 
 // HashStrRevBytes returns the hash of the reverse of sep and the
 // appropriate multiplicative factor for use in Rabin-Karp algorithm.
-//@ requires  p > 0
-//@ preserves acc(sep, p)
-//@ ensures   rhash == RKHashRev(seq(sep))
-//@ ensures   rpow == PowRK(PrimeRK, len(sep))
-//@ decreases
+// @ requires  p > 0
+// @ preserves acc(sep, p)
+// @ ensures   rhash == RKHashRev(seq(sep))
+// @ ensures   rpow == PowRK(PrimeRK, len(sep))
+// @ decreases
 func HashStrRevBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 	hash := uint32(0)
 	//@ invariant -1 <= i && i <= len(sep)-1
@@ -120,9 +120,9 @@ func HashStrRevBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 
 // HashStrRev returns the hash of the reverse of sep and the
 // appropriate multiplicative factor for use in Rabin-Karp algorithm.
-//@ ensures   rhash == RKHashStrRev(sep, 0, len(sep))
-//@ ensures   rpow == PowRK(PrimeRK, len(sep))
-//@ decreases
+// @ ensures   rhash == RKHashStrRev(sep, 0, len(sep))
+// @ ensures   rpow == PowRK(PrimeRK, len(sep))
+// @ decreases
 func HashStrRev(sep string) (rhash, rpow uint32) {
 	hash := uint32(0)
 	//@ invariant -1 <= i && i <= len(sep)-1
@@ -148,11 +148,11 @@ func HashStrRev(sep string) (rhash, rpow uint32) {
 
 // IndexRabinKarpBytes uses the Rabin-Karp search algorithm to return the index of the
 // first occurrence of substr in s, or -1 if not present.
-//@ requires  p > 0
-//@ requires  len(sep) <= len(s)
-//@ preserves acc(s, p) && acc(sep, p)
-//@ ensures   res != -1 ==> 0 <= res && res <= len(s)-len(sep)
-//@ decreases
+// @ requires  p > 0
+// @ requires  len(sep) <= len(s)
+// @ preserves acc(s, p) && acc(sep, p)
+// @ ensures   res != -1 ==> 0 <= res && res <= len(s)-len(sep)
+// @ decreases
 func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	// Rabin-Karp search
 	hashsep, pow := HashStrBytes(sep /*@ , p/2 @*/)
@@ -205,11 +205,11 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 // postconditions are stated in terms of StrMatchesAt, which captures exactly
 // the test performed by this function (matching window hash and successful
 // string comparison); see spec.gobra.
-//@ requires  len(substr) <= len(s)
-//@ ensures   res == -1 ==> forall j int :: {StrMatchesAt(s, substr, j)} 0 <= j && j <= len(s)-len(substr) ==> !StrMatchesAt(s, substr, j)
-//@ ensures   res != -1 ==> 0 <= res && res <= len(s)-len(substr) && StrMatchesAt(s, substr, res)
-//@ ensures   res != -1 ==> forall j int :: {StrMatchesAt(s, substr, j)} 0 <= j && j < res ==> !StrMatchesAt(s, substr, j)
-//@ decreases
+// @ requires  len(substr) <= len(s)
+// @ ensures   res == -1 ==> forall j int :: {StrMatchesAt(s, substr, j)} 0 <= j && j <= len(s)-len(substr) ==> !StrMatchesAt(s, substr, j)
+// @ ensures   res != -1 ==> 0 <= res && res <= len(s)-len(substr) && StrMatchesAt(s, substr, res)
+// @ ensures   res != -1 ==> forall j int :: {StrMatchesAt(s, substr, j)} 0 <= j && j < res ==> !StrMatchesAt(s, substr, j)
+// @ decreases
 func IndexRabinKarp(s, substr string) (res int) {
 	// Rabin-Karp search
 	hashss, pow := HashStr(substr)

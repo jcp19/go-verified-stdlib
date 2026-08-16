@@ -1,0 +1,6 @@
+{
+  "assert_timeout": 10000,
+  "//": "mutexInv carries several conditional permissions, and Silicon forks on each of them at every unfold. Joining at impure branch points takes the package from >20min to ~1.5min.",
+  "more_joins": "impure",
+  "other": ["--experimentalFriendClauses"]
+}

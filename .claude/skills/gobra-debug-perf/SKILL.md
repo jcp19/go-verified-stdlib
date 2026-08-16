@@ -135,7 +135,9 @@ Run it on the Viper file of the isolated member:
 # (chopping happens inside the verification step, so don't add --noVerify —
 # that skips chopping and dumps the whole unsliced package).
 gobra -i pkg/b.go@412 --printVpr
-silicon --numberOfParallelVerifiers 1 \
+# --assertTimeout should match the package's assert_timeout, otherwise queries
+# Gobra cuts off run to completion here and the durations do not correspond
+silicon --numberOfParallelVerifiers 1 --assertTimeout 30000 \
         --recordProofQueries queries.csv pkg/b.go.chopped0.vpr
 python3 .claude/skills/gobra-debug-perf/scripts/summarize_queries.py queries.csv
 ```
@@ -265,19 +267,31 @@ the `sadd` in the encoding of `&x[k]` — both of those appear in accepted
 triggers too. Program-function applications such as `{MatchesAt(q, pat, j)}`
 are also fine. `gobra-improve-perf` has the fix.
 
-#### Two ways to fool yourself while measuring
+#### Ways to fool yourself while measuring
 
 - **Comparing a run that aborts early against one that completes.** Silicon
   stops a member at its first failing obligation, so a variant that fails
   earlier finishes sooner and looks like a speed-up. Only compare runs that
   fail at the *same* place, or that both succeed. A "26× speed-up" that moved
   the first error earlier in the function is a 0× speed-up.
-- **Stripping invalid triggers to get Silicon to run.** Deleting a rejected
-  `{...}` from the dumped `.vpr` is a good way to get past the consistency
-  check and keep debugging — but it leaves that quantifier untriggered, so the
-  profile you collect describes a *different, slower* program than the one
-  Gobra verifies. Fix the trigger in the source and re-dump before trusting
-  per-query numbers.
+- **Comparing standalone Silicon against Gobra.** The two do not run the same
+  experiment. Gobra passes the package's `assert_timeout`, so an expensive
+  obligation is cut off; standalone Silicon defaults to no budget and lets the
+  same query run for minutes. Gobra also verifies members in parallel, while
+  profiling wants `--numberOfParallelVerifiers 1`. Both differences inflate
+  standalone wall-clock — enough that a 13-minute package took 25 minutes to
+  profile, and a 40-minute cap expired before the CSV was written at all. Pass
+  `--assertTimeout <same value>` when you want the numbers to correspond, and
+  do not read a standalone duration as "how long Gobra spends here".
+- **Trigger stripping is *not* the distortion it looks like.** Deleting a
+  rejected `{...}` from the dumped `.vpr` to get past the consistency check
+  leaves the quantifier untriggered — but a trigger Viper rejects was never
+  usable as a pattern in the first place, so the original was effectively
+  untriggered too. Silicon may infer a different pattern for the stripped
+  version (it says so: "Might not be able to use trigger ..."), so the two are
+  not guaranteed identical, but stripping does not by itself make the program
+  slower. Strip freely to keep debugging; just fix the trigger in the source
+  before drawing conclusions about that quantifier specifically.
 
 ### 6. Get evidence at the Viper / Z3 level when needed
 

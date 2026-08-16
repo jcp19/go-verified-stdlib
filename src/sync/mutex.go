@@ -40,8 +40,7 @@ type Mutex struct {
 	//@ ghost gl  bool           // mutexLocked is set / UnlockP is out
 	//@ ghost gw  bool           // mutexWoken is set / AwokeP is out
 	//@ ghost gh  bool           // an ownership handoff is parked in the invariant
-	//@ ghost ghc bool           // a handoff has been claimed but not yet installed
-	//@ ghost ghn int32          // waiter count when that handoff was claimed
+	//@ ghost ghc int32          // 0, or the waiter count when a handoff was claimed
 	//@ ghost gws bool           // the awoke token is parked in the invariant
 	//@ ghost gt  bool           // permission carrier for semaphore tickets
 }
@@ -173,59 +172,126 @@ func (m *Mutex) TryLock() (res bool) {
 	return true
 }
 
-// WORK IN PROGRESS: lockSlow carries the contract it must satisfy, but is still
-// marked `trusted` -- its body is not yet verified. Everything else in this file
-// is verified against the contracts shown.
-// TODO(claude): discharge this and drop `trusted`.
-//@ trusted
 //@ requires acc(m.LockP(), _)
 //@ ensures  m.LockP() && m.UnlockP() && m.LockInv()()
 func (m *Mutex) lockSlow() {
+	//@ m.lockPInv()
+	statep := &m.state
 	var waitStartTime int64
 	starving := false
 	awoke := false
 	iter := 0
-	oldv := m.state
+	// nl/nw/ns/ns track the four fields of newv as the code assembles it.
+	//@ ghost var nl, nw, ns, nn int32
+	var oldv int32
+	//@ critical mutexInv{m} (
+	//@ unfold mutexInv{m}()
+	oldv = atomics.LoadInt32(statep /*@, writePerm @*/)
+	//@ fold mutexInv{m}()
+	//@ )
+	//@ invariant m.LockP()
+	//@ invariant 0 <= oldv && 0 <= iter && 0 <= waitStartTime
+	//@ // `awoke` is exactly the ghost token for "mutexWoken is set, and I am the
+	//@ // one entitled to clear it"; while it is held the bit stays set, so every
+	//@ // read of the state word sees it.
+	//@ invariant awoke ==> acc(&m.gw, 1/2) && m.gw && bitWoken(oldv) == 1
+	//@ // starving implies awoke: `starving` is only ever set after a semaphore
+	//@ // wake-up, and that path either breaks or takes the token.
+	//@ invariant starving ==> awoke
 	for {
+		//@ bitsLemma(oldv)
 		// Don't spin in starvation mode, ownership is handed off to waiters
 		// so we won't be able to acquire the mutex anyway.
 		if oldv&(mutexLocked|mutexStarving) == mutexLocked && runtime_canSpin(iter) {
 			// Active spinning makes sense.
 			// Try to set mutexWoken flag to inform Unlock
 			// to not wake other blocked goroutines.
-			if !awoke && oldv&mutexWoken == 0 && oldv>>mutexWaiterShift != 0 &&
-				atomics.CompareAndSwapInt32(&m.state, oldv, oldv|mutexWoken) {
-				awoke = true
+			// The CAS is lifted out of the condition: Gobra requires an atomic
+			// operation to be a statement of its own inside a critical region.
+			if !awoke && oldv&mutexWoken == 0 && oldv>>mutexWaiterShift != 0 {
+				wokenv := oldv | mutexWoken
+				var swapped bool
+				//@ critical mutexInv{m} (
+				//@ unfold mutexInv{m}()
+				swapped = atomics.CompareAndSwapInt32(statep, oldv, wokenv)
+				//@ ghost if swapped {
+				//@ 	bitsOf(wokenv, 1, 1, 0, numWaiters(oldv))
+				//@ 	m.gw = true
+				//@ }
+				//@ fold mutexInv{m}()
+				//@ )
+				if swapped {
+					awoke = true
+				}
 			}
 			runtime_doSpin()
 			iter++
-			oldv = m.state
+			//@ critical mutexInv{m} (
+			//@ unfold mutexInv{m}()
+			oldv = atomics.LoadInt32(statep /*@, writePerm @*/)
+			//@ ghost if awoke { assert bitWoken(oldv) == 1 }
+			//@ fold mutexInv{m}()
+			//@ )
 			continue
 		}
+		//@ ghost nl, nw, ns, nn = bitLocked(oldv), bitWoken(oldv), bitStarving(oldv), numWaiters(oldv)
 		newv := oldv
 		// Don't try to acquire starving mutex, new arriving goroutines must queue.
 		if oldv&mutexStarving == 0 {
+			//@ bitsOf(newv, nl, nw, ns, nn)
 			newv |= mutexLocked
+			//@ ghost nl = 1
 		}
 		if oldv&(mutexLocked|mutexStarving) != 0 {
+			//@ bitsOf(newv, nl, nw, ns, nn)
+			//@ // ASSUMPTION (A3 in GOBRA-REPORT.md): the implementation does not
+			//@ // guard the waiter count, which overflows into the sign bit of
+			//@ // m.state once 2^28-1 goroutines are queued on one mutex.
+			//@ assume nn < maxWaiters
 			newv += 1 << mutexWaiterShift
+			//@ ghost nn = nn + 1
 		}
 		// The current goroutine switches mutex to starvation mode.
 		// But if the mutex is currently unlocked, don't do the switch.
 		// Unlock expects that starving mutex has waiters, which will not
 		// be true in this case.
 		if starving && oldv&mutexLocked != 0 {
+			//@ bitsOf(newv, nl, nw, ns, nn)
 			newv |= mutexStarving
+			//@ ghost ns = 1
 		}
 		if awoke {
 			// The goroutine has been woken from sleep,
 			// so we need to reset the flag in either case.
+			//@ bitsOf(newv, nl, nw, ns, nn)
+			// Unreachable: holding the token means mutexWoken was set in every
+			// state observed since, so nw == 1 here.
 			if newv&mutexWoken == 0 {
 				throw("sync: inconsistent mutex state")
 			}
 			newv &^= mutexWoken
+			//@ ghost nw = 0
 		}
-		if atomics.CompareAndSwapInt32(&m.state, oldv, newv) {
+		var swapped bool
+		//@ critical mutexInv{m} (
+		//@ unfold mutexInv{m}()
+		swapped = atomics.CompareAndSwapInt32(statep, oldv, newv)
+		//@ ghost if swapped {
+		//@ 	bitsOf(newv, nl, nw, ns, nn)
+		//@ 	ghost if awoke {
+		//@ 		// mutexWoken was cleared, so the token goes back to the invariant.
+		//@ 		m.gw = false
+		//@ 	}
+		//@ 	ghost if bitLocked(oldv) == 0 && bitStarving(oldv) == 0 {
+		//@ 		// The mutex was logically free, so the invariant just handed over
+		//@ 		// the protected resource and this CAS took ownership.
+		//@ 		m.gl = true
+		//@ 		fold m.UnlockP()
+		//@ 	}
+		//@ }
+		//@ fold mutexInv{m}()
+		//@ )
+		if swapped {
 			if oldv&(mutexLocked|mutexStarving) == 0 {
 				break // locked the mutex with CAS
 			}
@@ -234,18 +300,43 @@ func (m *Mutex) lockSlow() {
 			if waitStartTime == 0 {
 				waitStartTime = runtime_nanotime()
 			}
+			//@ m.lockPInv()
 			runtime_SemacquireMutex(&m.sema, queueLifo, 1)
 			starving = starving || runtime_nanotime()-waitStartTime > starvationThresholdNs
-			oldv = m.state
+			//@ critical mutexInv{m} (
+			//@ unfold mutexInv{m}()
+			oldv = atomics.LoadInt32(statep /*@, writePerm @*/)
+			//@ unfold semTicket{m}()
+			//@ // Redeem the ticket. Holding it means at least one payload is
+			//@ // parked -- otherwise the invariant would leave us with 5/4 of
+			//@ // &m.gt -- and the state word says which one.
+			//@ ghost if bitStarving(oldv) == 1 {
+			//@ 	// Starvation mode excludes mutexWoken, so the awoke token is not
+			//@ 	// out at all and cannot be parked: this ticket is the handoff.
+			//@ 	assert m.gh
+			//@ 	m.gh = false
+			//@ 	m.ghc = numWaiters(oldv)
+			//@ } else {
+			//@ 	// A parked handoff would force starvation mode, so this ticket is
+			//@ 	// the parked awoke token.
+			//@ 	assert m.gws
+			//@ 	m.gws = false
+			//@ }
+			//@ fold mutexInv{m}()
+			//@ )
+			//@ bitsLemma(oldv)
 			if oldv&mutexStarving != 0 {
 				// If this goroutine was woken and mutex is in starvation mode,
 				// ownership was handed off to us but mutex is in somewhat
 				// inconsistent state: mutexLocked is not set and we are still
 				// accounted as waiter. Fix that.
+				// Unreachable: a claimed handoff pins mutexLocked clear, starvation
+				// mode excludes mutexWoken, and a starving mutex always has a waiter.
 				if oldv&(mutexLocked|mutexWoken) != 0 || oldv>>mutexWaiterShift == 0 {
 					throw("sync: inconsistent mutex state")
 				}
 				delta := int32(mutexLocked - 1<<mutexWaiterShift)
+				//@ ghost exitStarving := false
 				if !starving || oldv>>mutexWaiterShift == 1 {
 					// Exit starvation mode.
 					// Critical to do it here and consider wait time.
@@ -253,16 +344,41 @@ func (m *Mutex) lockSlow() {
 					// can go lock-step infinitely once they switch mutex
 					// to starvation mode.
 					delta -= mutexStarving
+					//@ ghost exitStarving = true
 				}
-				atomics.AddInt32(&m.state, delta)
+				//@ ghost var dn int32
+				//@ critical mutexInv{m} (
+				//@ unfold mutexInv{m}()
+				//@ // The claim token pins the word: starving set, mutexLocked clear,
+				//@ // and the waiter count can only have grown since the claim.
+				//@ ghost dn = numWaiters(m.state)
+				//@ bitsLemma(m.state)
+				//@ bitsOf(m.state, 0, 0, 1, dn)
+				atomics.AddInt32(statep, delta)
+				//@ ghost if exitStarving {
+				//@ 	bitsOf(m.state, 1, 0, 0, dn-1)
+				//@ } else {
+				//@ 	bitsOf(m.state, 1, 0, 1, dn-1)
+				//@ }
+				//@ ghost m.ghc = 0
+				//@ ghost m.gl = true
+				//@ fold m.UnlockP()
+				//@ fold mutexInv{m}()
+				//@ )
 				break
 			}
 			awoke = true
 			iter = 0
 		} else {
-			oldv = m.state
+			//@ critical mutexInv{m} (
+			//@ unfold mutexInv{m}()
+			oldv = atomics.LoadInt32(statep /*@, writePerm @*/)
+			//@ ghost if awoke { assert bitWoken(oldv) == 1 }
+			//@ fold mutexInv{m}()
+			//@ )
 		}
 	}
+	//@ m.lockPInv()
 
 	if race.Enabled {
 		race.Acquire(unsafe.Pointer(m))

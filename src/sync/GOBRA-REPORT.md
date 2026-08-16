@@ -1,8 +1,10 @@
 # Specifying and verifying `sync.Mutex` with Gobra
 
-**Status: work in progress.** `Lock` (fast path), `TryLock`, `Unlock` and
-`unlockSlow` are verified. `lockSlow` carries the contract it has to satisfy but
-is still marked `trusted`; discharging it is the remaining work.
+**Status: `sync.Mutex` verifies.** `Lock`, `lockSlow`, `TryLock`, `Unlock` and
+`unlockSlow` are all verified against the contracts below, with no `trusted`
+members and a single `assume` (§A3). Both `throw` sites are proved *unreachable*:
+the mutex never reports an inconsistent state. Gobra reports 0 errors on
+`src/sync` in about 95 s.
 
 ## What is being verified, and against which specification
 
@@ -66,7 +68,10 @@ the invariant:
 
 * `gl` — held by the lock holder. `UnlockP()` *is* this token. Out ⟺ `mutexLocked` set.
 * `gw` — the right to clear `mutexWoken`; this is what `lockSlow`'s local `awoke` stands for. Out ⟺ `mutexWoken` set.
-* `ghc` — a handoff that a waiter has claimed but not yet installed.
+* `ghc` — a handoff a waiter has claimed but not yet installed. It also records
+  the waiter count seen at claim time; since only the claimer ever decrements
+  that count, and does so once, this is a lower bound that stays valid and is
+  what justifies subtracting a waiter in the `delta` update.
 
 and invariant-owned flags record resources parked *inside* the invariant on
 behalf of a semaphore ticket: `gh` (a parked ownership handoff) and `gws` (a
@@ -100,8 +105,8 @@ otherwise let both add `mutexLocked` to the state word.
 
 ## Assumptions
 
-Every assumption is listed here. There are no `assume` statements other than the
-one noted in §A3, and no `trusted` members other than `lockSlow` while it is WIP.
+Every assumption is listed here. There is exactly one `assume` statement in the
+development (§A3) and no `trusted` member at all.
 
 **A1. The bit layout (`bitsLemma` in `mutex.gobra`).**
 Gobra encodes `&`, `|`, `&^` and `>>` on non-constant operands as *uninterpreted*
@@ -156,6 +161,12 @@ rejected, not mis-verified.
 **A8. The CAS-retry loop in `unlockSlow` terminates** (`decreases _`). Gobra's
 stub gives `Unlock` a termination measure; the retry loop is lock-free but not
 wait-free, so its termination needs a fairness assumption Gobra cannot express.
+`lockSlow` needs no such assumption: `Lock` has no termination measure, matching
+the stub, because `runtime_SemacquireMutex` blocks.
+
+Not an assumption, but worth recording: `throw` carries `requires false`, the
+contract Gobra's builtin package gives `panic`. Both call sites are therefore
+*proved* unreachable rather than assumed away.
 
 ## Changes to the Go source
 
@@ -207,7 +218,24 @@ over locals, would be safe to allow.
 ### F7. Gobra: `lowContext()` cannot appear on an implemented method
 With hyper mode off, `removeLow` raises a consistency error for any member with a
 body, so Gobra's own `sync.Mutex` stub carries a contract that no implementation
-can be verified against.
+can be verified against. (Secure information flow is out of scope for this work,
+so this only matters as a note on the stub.)
+
+### F8. Performance: the invariant's conditional permissions cause path explosion
+`mutexInv` carries several impure implications (`!m.gl ==> acc(&m.gl, 1/2)` and
+friends), and Silicon forks on each of them at *every* unfold. `lockSlow` opens
+the invariant six times, so with the default `more_joins` setting the package
+went from ~95 s to over 20 minutes without finishing. Setting
+
+```json
+"more_joins": "impure"
+```
+
+in `src/sync/gobra.json` — join at impure branch points — brings it back to
+~95 s. This is worth knowing for anyone writing invariants in this style: the
+half-permission token idiom is naturally full of conditional permissions, and it
+is the number of them *per predicate*, not the size of the method, that sets the
+cost.
 
 ## Comparison with the previous project
 

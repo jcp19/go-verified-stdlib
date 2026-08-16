@@ -55,6 +55,22 @@
 //     rather than `new`/`old`: `old` and `new` are keywords in Gobra. Go
 //     callers pass arguments positionally, so the renaming is invisible to
 //     them.
+//
+//   - The package clause below says `atomics`, not `atomic`. `atomic` is a
+//     reserved word in Gobra (it is the modifier that marks a function as
+//     physically atomic), so neither `package atomic` nor a qualified use
+//     `atomic.CompareAndSwapInt32(...)` parses. Until that is fixed, a Go file
+//     that wants to be verified has to alias the import:
+//
+//     	import atomics "sync/atomic"
+//
+//     which is what src/sync/mutex.go does. The directory is still `sync/atomic`,
+//     so the import path is unchanged.
+//
+//   - The unsafe.Pointer variants (SwapPointer, CompareAndSwapPointer,
+//     LoadPointer, StorePointer) are deliberately absent. Gobra has no model of
+//     unsafe pointers, and giving them contracts over the placeholder model in
+//     src/gobra/unsafe would look like verification without being any.
 package atomics
 
 // The bounds of the sized integer types, spelled out because Gobra has no

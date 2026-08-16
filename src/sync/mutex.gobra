@@ -222,7 +222,7 @@ pred mutexInv(m *Mutex) {
 	acc(&m.state) &&
 	acc(&m.gl, 1/2) && acc(&m.gw, 1/2) &&
 	acc(&m.gh) && acc(&m.gws) && acc(&m.gt, 1/2) &&
-	acc(&m.ghc, 1/2) && acc(&m.ghn) &&
+	acc(&m.ghc, 1/2) &&
 	acc(&m.inv, _) &&
 	// the other half of a token, whenever that token is not out
 	(!m.gl ==> acc(&m.gl, 1/2)) &&
@@ -231,7 +231,7 @@ pred mutexInv(m *Mutex) {
 	// a quarter of the ticket counter for every payload that is *not* parked
 	(!m.gws ==> acc(&m.gt, 1/4)) &&
 	(!m.gh ==> acc(&m.gt, 1/4)) &&
-	(!m.ghc ==> acc(&m.ghc, 1/2)) &&
+	(m.ghc == 0 ==> acc(&m.ghc, 1/2)) &&
 
 	// --- the state word ---
 	0 <= m.state && numWaiters(m.state) <= maxWaiters &&
@@ -247,8 +247,15 @@ pred mutexInv(m *Mutex) {
 	// not installed it yet (ghc) -- pins the mutex in starvation mode. While a
 	// claim is outstanding the waiter count can only grow, which is what lets the
 	// claimer subtract from it safely.
-	((m.gh || m.ghc) ==> bitStarving(m.state) == 1 && bitLocked(m.state) == 0) &&
-	(m.ghc ==> 1 <= m.ghn && m.ghn <= numWaiters(m.state)) &&
+	// m.ghc is 0 when no claim is outstanding, and otherwise the waiter count
+	// observed when the claim was made -- a lower bound that survives because
+	// only the claimer ever decrements the count, and it does so exactly once.
+	0 <= m.ghc &&
+	((m.gh || m.ghc != 0) ==> bitStarving(m.state) == 1 && bitLocked(m.state) == 0) &&
+	(m.ghc != 0 ==> m.ghc <= numWaiters(m.state)) &&
+	// at most one ownership transfer is in flight: parking a new handoff needs
+	// the gl token, and a claim keeps mutexLocked clear
+	(m.ghc != 0 ==> !m.gh) &&
 
 	// --- the protected resource ---
 	m.inv != none[pred()] &&
@@ -290,8 +297,7 @@ func (m *Mutex) SetInv(ghost inv pred()) {
 	m.gl = false
 	m.gw = false
 	m.gh = false
-	m.ghc = false
-	m.ghn = 1
+	m.ghc = 0
 	m.gws = false
 	m.gt = false
 	semaphoreSetInv(&m.sema, semTicket{m})

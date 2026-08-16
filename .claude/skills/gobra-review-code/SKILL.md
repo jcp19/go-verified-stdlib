@@ -551,3 +551,13 @@ false finding costs a context switch away from it.
 - **Proof structure** — `assert` steps, `fold`/`unfold` placement, lemma calls — unless it is
   provably dead. Whether a proof step is needed is something only the verifier settles, and
   guessing wrong sends the author into a re-verification cycle for nothing.
+- **A precondition that looks like it belongs in the body.** The natural review note on a
+  clause like `requires forall k :: {&s[lo:hi][k]} &s[lo:hi][k] == &s[lo+k]` is "assert this
+  at the top of the body instead of cluttering the contract". Check the neighbouring clauses
+  first: if any of them reads the reslice — `seq(s[lo:hi])`, `s[lo:hi][k]` — then that
+  correspondence is what gives the clause its permission, and a contract is checked
+  independently of the body, so an assert inside is too late. The failure is not subtle when
+  it happens (`Permission to seq(s[lo:hi]) might not suffice`, reported *on the requires
+  line*), but it costs the author a round trip. The same reasoning applies to any
+  precondition whose job is to make a later clause well-defined rather than to constrain the
+  caller.

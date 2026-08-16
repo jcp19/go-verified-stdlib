@@ -161,6 +161,24 @@ Restrictions: no `return` inside an outline, and no `break`/`continue` targeting
 a loop outside it. Use `before(x)` (not `old(x)`) to refer to the pre-state of
 the block.
 
+#### Prefer a ghost lemma to an `outline` when the block allows it
+
+The context-pruning is not special to `outline`: **a lemma's proof context is
+exactly its precondition**, so a ghost lemma with the same contract prunes
+identically. What it adds is that it is reusable across call sites, lives in
+`lemmas.gobra` where ghost code belongs, and can be verified on its own in
+seconds instead of by re-running the enclosing member.
+
+The `return` restriction is the reason to care, not a detail. In a loop that
+searches and returns on success, the branch that most needs a small context is
+the one containing the `return` — and that is exactly the branch `outline`
+cannot cover. On a Rabin-Karp search, outlining the fall-through was the first
+thing that made the member verify in isolation, and the package run still
+failed, in the `return` branch that had to stay inline. Moving the same
+contracts into two lemmas — one per branch — verified the package. Reach for
+`outline` when the block genuinely cannot be a lemma (it needs locals the rest
+of the function uses, or `before(x)`); otherwise write the lemma.
+
 ### 4. Backend algorithm options (cheap to try, per-member)
 
 These change how Silicon generates proof obligations. Set them **per member**
@@ -211,6 +229,33 @@ instantiation. This is standard across verifiers, and the advice transfers:
 - **Always give explicit triggers** on quantified assertions, and choose the
   most restrictive ones that still fire. `--requireTriggers` enforces this
   project-wide and is worth turning on.
+- **A fact with the wrong trigger is not a fact.** A quantified hypothesis
+  whose pattern names a term the *goal* never mentions sits in the context and
+  never fires — indistinguishable, from the error message, from a fact you
+  forgot to establish. Before adding a missing step, check whether the step is
+  already there under a pattern nothing matches. When one hypothesis serves two
+  consumers that write the window differently, give it both patterns as
+  alternatives rather than duplicating the assertion:
+
+  ```go
+  // {&s[lo:hi][k]} for the permission reasoning, which writes addresses;
+  // {seq(s)[lo+k]} for the pointwise reasoning, which never mentions them
+  assert forall k int :: {&s[lo:hi][k]} {seq(s)[lo+k]} 0 <= k && k < hi-lo ==>
+      &s[lo:hi][k] == &s[lo+k]
+  ```
+
+  Arithmetic in an *index* (`seq(s)[lo+k]`) is a legal pattern; only arithmetic
+  in a slice *bound* (`s[i-n:i]`) is rejected — see the trigger notes in
+  `gobra-debug-perf`.
+- **Establish a fact before the branch that consumes it**, not merely where the
+  invariant needs it. A lemma call at the end of a loop body re-establishes the
+  invariant, but every branch *inside* the body ran without it. In a Rabin-Karp
+  search the rolling-hash step sat at the end of the body, so the window test
+  did not know `h` to be the hash of the window it was about to compare — which
+  is precisely the fact that refutes a match on the common path. Moving the
+  same lemma call above the test cost nothing and unblocked a proof that had
+  been written off as too slow. Symptom to watch for: an obligation inside a
+  branch that looks like it should follow from the invariant "one step later".
 - **Watch for matching loops**: a trigger whose instantiation produces a new
   term matching the same trigger diverges. If profiling shows a *user-provided*
   matching loop, fix it — that is a real bug, not a tuning issue. Loops
@@ -226,14 +271,76 @@ instantiation. This is standard across verifiers, and the advice transfers:
   checker; `assert P by contra { ... }` and `asserting e1 in e2` do work.
 - **Avoid non-linear arithmetic** where you can; prove it in small steps in
   dedicated lemmas. `--disableNL` keeps it out of everything else.
+- **Do not "repair" a rejected trigger by adding a permissive valid one.** When
+  `gobra-debug-perf`'s consistency check reports an invalid pattern, the
+  tempting move is to swap in something that parses. Measured on a Rabin-Karp
+  search: replacing `{seq(s)[lo+k]}` with `{pat[k]}` — a pattern that matches
+  nearly everywhere — took the package from 738s and verifying to 578s and
+  *failing*. Deleting the invalid pattern with no replacement was the variant
+  that helped (standalone Silicon went from failing at 8m22s to verifying in
+  7m24s), which `--requireTriggers` will not let you write if it was the
+  quantifier's only pattern. Treat an invalid trigger as a diagnosis, not a
+  to-do: it tells you the quantifier is firing on something other than what
+  you intended.
+
+### 5c. Never make a caller prove a disjunction
+
+A lemma precondition of the form `A || B` is the single most expensive shape
+found in a real Gobra proof: on a Rabin-Karp search, one such clause was
+**65% of the package's entire prover time** — five queries, 321s, the worst
+91s — and it failed often enough to make the run time bimodal (~330s or ~750s
+for identical source).
+
+The reason is structural. Given a path condition like `!(h == hashsep &&
+Equal(w, sep))`, proving `h != H || seq(w) != pat` is one goal with no branch
+for Z3 to take: it has to connect both disjuncts to the negated conjunction at
+once. Each disjunct *on its own path* is a one-step goal.
+
+The shape to reach for is one lemma per failure mode, selected by a `ghost if`
+on the discriminating condition:
+
+```go
+//@ ghost if h != hashsep {
+//@ 	lemmaExtendByHash(...)     // arithmetic only, no slices
+//@ } else {
+//@ 	lemmaExtendByWindow(...)   // the byte-level path
+//@ }
+```
+
+Be honest about the outcome, though: on that codebase the split *fixed the hot
+query and made the member slower overall* (1960s, new failure elsewhere),
+because the extra branch multiplied the surrounding context. So treat this as
+a strong diagnostic signal — a disjunctive precondition is where to look
+first — and measure the split like any other change rather than assuming it
+wins.
 
 ### 5b. Rewrite the specification, not just the proof
 
 The costliest thing in a slow member is often a modelling choice in the spec
-functions it mentions. These three rewrites are worth checking before any
-tuning flag, because each removes a whole class of terms from *every*
-obligation rather than shaving one query. On a Rabin-Karp search over byte
-slices they compounded to 42m → 10m41s with no change to the Go code.
+functions it mentions. These rewrites are worth checking before any tuning
+flag, because each removes a whole class of terms from *every* obligation
+rather than shaving one query. On a Rabin-Karp search over byte slices they
+compounded to 42m → 10m41s with no change to the Go code.
+
+**Know which of the two "window" terms you are writing.** For a byte slice `s`,
+`seq(s[lo:hi])` (reslice, then convert) and `seq(s)[lo:hi]` (convert, then
+slice the sequence) denote the same bytes and cost wildly different amounts:
+the first is a plain slice-to-seq term, the second is nested
+`Seq_take`/`Seq_drop`. You will meet both, because contracts like `Equal`'s
+hand you the first while specifications written over `seq(s)` want the second,
+and the obvious bridge is one ground equality:
+
+```go
+assert seq(s[lo:i]) == seq(s)[lo:i]   // verifies in seconds, and is a trap
+```
+
+It does verify. It is also enough on its own to take a Rabin-Karp search loop
+from 32s to an out-of-memory kill of Z3 — measured *before* any new
+postcondition was added — because from that line on, every obligation in the
+loop carries the `Seq_take`/`Seq_drop` terms. Bridge pointwise instead, inside
+a lemma, so no sliced sequence ever enters the caller's context. The general
+form of the mistake: a cheap-looking assertion that introduces one expensive
+*term* is not cheap, because terms persist and assertions do not.
 
 **Replace sequence slicing with a recursive range form.** A definition like
 

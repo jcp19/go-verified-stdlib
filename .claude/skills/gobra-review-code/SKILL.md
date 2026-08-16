@@ -1,6 +1,6 @@
 ---
 name: gobra-review-code
-description: Review Gobra code — .gobra files, or .go files carrying //@ and /*@ @*/ annotations — for idiomatic style and specification conventions, covering annotation order, Go naming, .go/.gobra file separation, purity and permission discipline, `integer` arithmetic, `old` expressions, and interface specifications. Use whenever the user asks to review, critique, clean up, or sanity-check Gobra code, specs, contracts, predicates, lemmas or ghost code; when a diff or PR touches .gobra files or Gobra annotations; when the user pastes Gobra code and asks "does this look right?"; and when they ask about Gobra style, conventions, or naming. Use it before submitting Gobra code for human review, even if the user only asked "is this good?".
+description: Review Gobra code — .gobra files, or .go files carrying //@ and /*@ @*/ annotations — for idiomatic style and specification conventions, covering annotation order, Go naming, .go/.gobra file separation, purity, permission strength (read fractions vs. `write`), `integer` arithmetic, `old` expressions, and interface specifications. Use whenever the user asks to review, critique, clean up, or sanity-check Gobra code, specs, contracts, predicates, lemmas or ghost code; when a diff or PR touches .gobra files or Gobra annotations; when the user pastes Gobra code and asks "does this look right?"; when they ask whether a contract demands too much permission; and when they ask about Gobra style, conventions, or naming. Use it before submitting Gobra code for human review, even if the user only asked "is this good?".
 ---
 
 # Reviewing Gobra code
@@ -25,7 +25,8 @@ conventions that repeatedly come up in review and that a verifier will never com
    large, say why it is worth it.
 
 Report findings grouped into **Correctness / soundness** (wrong, unsound, or won't verify)
-and **Style** (verifies fine, reads badly), each as `file:line — what — why — fix`:
+and **Style** (verifies fine, but reads badly or over-constrains clients), each as
+`file:line — what — why — fix`:
 
 ```
 ### Style
@@ -265,7 +266,175 @@ pure func (c *counter) HasNext() bool {
 ```
 
 Non-pure functions are unaffected — there, asking for the smallest amount you actually need
-is exactly right, and a read-only method requiring `write` is its own review finding.
+is exactly right, and a read-only method requiring `write` is its own review finding (§4.3).
+
+### 4.3 A read-only function should ask for read permission
+
+`acc(x)`, `acc(x, write)`, and a bare predicate instance `x.Mem()` all mean *all* of the
+permission. A non-pure function that never writes should not be asking for that. This is the
+most common over-specification in Gobra contracts, and unlike a naming problem it is a real
+API defect: the author pays nothing, and every caller pays forever.
+
+Three things a `write` precondition takes away from callers:
+
+- **A caller holding only a fraction cannot call the function at all.** Any client that
+  itself received read access has nothing to hand over, so the read-only function is
+  unreachable from exactly the contexts it was meant for.
+- **Callers lose framing.** A caller that keeps a positive share across the call knows *for
+  free* that nothing under that share changed. A caller that surrendered everything knows
+  only what the postcondition spells out — which is why over-permissioned contracts grow
+  postconditions whose only job is to say "and nothing else moved".
+- **No two readers at once.** Two goroutines cannot both hold `write`, so the contract rules
+  out concurrent reads for a function that could not race in the first place.
+
+#### How to spot it
+
+Flag a non-pure function when both of these hold:
+
+- the contract takes `write` (`acc(x)`, `acc(x, write)`, `acc(x, 1)`, or a bare `x.Mem()`),
+- the body assigns to nothing reachable through that parameter — no `*p = …`, no `p.f = …`,
+  no `s[i] = …`, no `append`/`copy` into it — and calls nothing that demands write.
+
+Getters, `Len`, `Peek`, `Contains`, `String`, `Equals`, `Validate` and marshalling routines
+are the usual suspects.
+
+#### The fix: a read-permission constant per package
+
+The fix is *not* to sprinkle `1/2` and `1/4` across contracts, unless in contracts of private
+functions when need be. Ad-hoc fractions do not compose: as soon as one read-only function
+calls another, the amounts have to be split and lined up by hand. Give the package one
+constant instead, and let every public contract that means "read" use it — read-only
+functions then pass the amount straight through to each other, with no permission arithmetic
+in sight.
+
+```gobra
+// mypkg/spec.gobra — ghost definitions of the package live here (§8)
+
+// Enables Gobra in the current file.
+// +gobra
+
+package mypkg
+
+// R is the permission amount this package's public contracts use to stand for
+// read-only access. It has to be positive, small enough that any realistic holder
+// can spare it, and larger than the R of the packages this one calls into.
+ghost const R perm = 1/1000
+```
+
+`perm` is Gobra's type of permission amounts, and a package-level `perm` constant is
+ordinary Gobra — `const p perm = 1/4` appears in Gobra's own regression suite, and the bare
+`const` form is equally accepted here since `perm` is already a ghost type. Being an
+exported constant, `R` is nameable by clients, as §2 requires of anything appearing in a
+public contract. Two mechanical points:
+
+- **Do not name the package `perm`.** The import would shadow Gobra's predeclared `perm`
+  type in every file that uses it. `perms` is fine.
+- **Keep the value a single literal fraction.** Nested arithmetic falls back to integer
+  semantics — `perm((1/2)/1)` is `0`, not `1/2` — and a constant that is silently `noPerm`
+  produces a baffling "permission might not suffice" on the *body*, not on the constant.
+
+#### One constant per package, not one per project
+
+A caller that hands away *everything* it holds for a location cannot frame that location
+across the call: it holds nothing while the callee runs, so on return the value is unknown
+unless the callee's postcondition pins it down. A single project-wide amount walks straight
+into this, because caller and callee then ask for exactly the same fraction:
+
+```go
+import "pkg"
+
+type T struct {
+	name pkg.Name
+	// … other fields
+}
+
+// requires acc(t, R)
+func (t *T) GetName() (res string) {
+	return t.name.ToString()   // also requires acc(&t.name, R) — takes the whole share
+}
+```
+
+`GetName` holds exactly `R` of `&t.name`, gives all of it away, and can no longer prove that
+`t.name` did not change. It costs nothing in a one-line body like this one, but it bites as
+soon as the function reads state around the call.
+
+So each package declares its own `R` and picks a value **larger than the `R` of every package
+it calls into** — the deeper a package sits, the smaller its fraction. Callers then always
+retain a positive remainder and frame for free. The same trap exists between two read-only
+functions *within* a package: the usual way out is to make the inner one `pure`, since a pure
+function never takes permission away (§4.2), and the fallback is the `ghost p perm` parameter
+below.
+
+At the use site:
+
+```go
+// ✗ — Len only reads, but takes the whole structure
+requires l.Mem()
+ensures  l.Mem()
+ensures  res == len(l.View())
+ensures  l.View() == old(l.View())   // only needed because the caller gave up everything
+func (l *List) Len() (res int)
+
+// ✓ — the caller keeps a share, so "nothing moved" needs no stating
+preserves acc(l.Mem(), R)
+ensures   res == len(l.View())
+func (l *List) Len() (res int)
+```
+
+A client in another package writes `acc(l.Mem(), list.R)`. If it names that package only from
+annotations, the import goes in an annotation too — `//@ import "…/list"` — so the `.go` file
+stays compilable Go (§3).
+
+**Be honest about what the rewrite costs.** The amount multiplies through the predicate
+body, so every `fold`, `unfold` and `unfolding` in the function has to carry it —
+`unfold acc(l.Mem(), R)` yields `acc(&l.head, R)`, not `acc(&l.head)`, and the
+proof below it may need the same treatment. That is a real diff, so propose it when the
+function is genuinely read-only and part of an API, and skip it for a package-private helper
+with one caller.
+
+#### Why not `acc(x, _)`
+
+The wildcard is the tempting shortcut, and it breaks callers in a way a constant does not:
+the amount handed back is *some* positive amount, not the one that was handed over, so a
+caller can never reassemble what it started with.
+
+```go
+preserves acc(p, _)
+func (p *pair) sum() (s int)
+
+func client() {
+	p := &pair{3, 5}
+	res := p.sum()
+	p.left = res  // ERROR: Permission to p.left might not suffice.
+}
+```
+
+With a named constant this works: a caller holding `write` gives away `R`, gets `R` back, and
+holds `write` again.
+
+#### When the constant is not enough
+
+A `ghost p perm` parameter with `requires p > 0` is strictly more versatile, and the price is
+an extra argument at every call site plus a `p` threaded through every intermediate contract.
+Keep it for the cases the constant genuinely cannot express:
+
+```go
+requires  p > 0
+preserves acc(l.Mem(), p)
+func (l *List) Get(i int, ghost p perm) (res int)
+```
+
+- **Splitting a read share further** — a function that holds `acc(x, R)` and fans out to
+  goroutines that each need their own share. Each would need `R/2`, which no fixed constant
+  names.
+- **Amount-polymorphic APIs** — a wrapper or callback that must return exactly the caller's
+  amount, when that amount is chosen elsewhere and is not `R`.
+
+Everything else — the ordinary sequential read-only method — is served by the constant, and
+that is the version worth suggesting in review.
+
+Finally, this check does not reopen §4.2: in a **pure** function the amount is meaningless,
+so plain `acc(x)` stays correct there, and `R` does not belong in its contract.
 
 ## 5. Prefer `integer` in specifications
 
@@ -367,9 +536,6 @@ These come up often enough in review to be worth scanning for, but they are judg
 - **Postconditions restating a pure function's body.** Gobra reasons about pure functions
   through their bodies, so `ensures res == <the body>` is redundant. It also pins the body
   into the contract, which makes later refactoring a breaking change.
-- **Permissions stronger than needed.** A non-pure function that only reads should ask for a
-  fraction, not `write` — otherwise callers cannot run it concurrently or keep their
-  own read access across the call.
 - **`preserves P` instead of `requires P` + `ensures P`.** Shorter, and makes the intent —
   this resource is borrowed, not consumed — visible at a glance.
 - **Missing or over-clever termination measures.** `decreases` is mandatory on pure and

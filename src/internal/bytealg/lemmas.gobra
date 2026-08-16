@@ -247,21 +247,17 @@ func lemmaMatchesAtFalseHashRange(q, pat seq[byte], j, k int) {
 }
 
 // The two lemmas below are the interface between IndexRabinKarpBytes and the
-// abstractions above. Both take the window of s as a pair of indices plus the
-// caller's address correspondence between s[lo:hi] and s, and hand back a fact
-// about MatchesAt over seq(s) alone. Two things make that split worth the
-// extra parameters:
+// abstractions above. Both take the window of s as a pair of indices and hand
+// back a fact about MatchesAt over seq(s) alone. Doing this in a lemma rather
+// than inline in the search loop is what makes it go through: a lemma's proof
+// context is exactly its precondition, whereas inline the same steps are
+// attempted against everything the loop has accumulated by that point, and
+// the window-equality step then exceeds the assert budget -- not for want of
+// a fact, but for want of room.
 //
-//   - The correspondence has to be a precondition rather than something the
-//     lemma derives: it is what makes the permission for the reslice, and
-//     hence seq(s[lo:hi]), available at all. Deriving it in the body is too
-//     late, since the contract is checked first. It also has to carry the
-//     second trigger, because the pointwise reasoning inside mentions
-//     seq(s)[lo+m] and never &s[lo:hi][m].
-//   - A lemma's proof context is exactly its precondition. Written inline in
-//     the search loop, the same steps are attempted against everything that
-//     loop has accumulated, and the window-equality step then exceeds the
-//     assert budget -- not for want of a fact, but for want of room.
+// Both contracts carry the caller's address correspondence between s[lo:hi]
+// and s (the ADDRESSES precondition below). It cannot be moved into the body,
+// and it costs the caller nothing; see the note at its first occurrence.
 
 // lemmaMatchesAtWindow: a window of s that equals pat is an occurrence of pat
 // in s at the window's start.
@@ -269,8 +265,18 @@ ghost
 requires  0 < p
 requires  acc(s, p)
 requires  0 <= lo && lo <= hi && hi <= len(s)
-requires  forall k int :: {&s[lo:hi][k]} {seq(s)[lo+k]} 0 <= k && k < hi-lo ==> &s[lo:hi][k] == &s[lo+k]
 requires  len(pat) == hi-lo
+// ADDRESSES. This has to be a precondition, not the first statement of the
+// body: it is what makes the permission for the reslice -- and hence
+// seq(s[lo:hi]) in the next clause -- available, and a contract is checked
+// independently of the body it belongs to. Dropping it fails not on the
+// assertion below but on the clause below it, with "Permission to
+// seq(s[lo:hi]) might not suffice". It is free at the call site, which has to
+// assert the same quantifier anyway for Equal(s[lo:hi], sep) to have
+// permission. The second trigger is load-bearing too: the pointwise reasoning
+// in the body mentions seq(s)[lo+m] and never &s[lo:hi][m], so under the
+// address pattern alone this fact would sit in the context and never fire.
+requires  forall k int :: {&s[lo:hi][k]} {seq(s)[lo+k]} 0 <= k && k < hi-lo ==> &s[lo:hi][k] == &s[lo+k]
 requires  seq(s[lo:hi]) == pat
 ensures   acc(s, p)
 ensures   MatchesAt(seq(s), pat, lo)
@@ -290,11 +296,13 @@ ghost
 requires  0 < p
 requires  acc(s, p)
 requires  0 <= lo && lo <= hi && hi <= len(s)
-requires  forall k int :: {&s[lo:hi][k]} {seq(s)[lo+k]} 0 <= k && k < hi-lo ==> &s[lo:hi][k] == &s[lo+k]
 requires  len(pat) == hi-lo
 requires  hash == RKHashRange(seq(s), lo, hi)
-requires  hash != RKHashRange(pat, 0, hi-lo) || seq(s[lo:hi]) != pat
 requires  NoMatchBefore(seq(s), pat, lo)
+// ADDRESSES, as in lemmaMatchesAtWindow: needed for seq(s[lo:hi]) in the
+// clause below to have permission.
+requires  forall k int :: {&s[lo:hi][k]} {seq(s)[lo+k]} 0 <= k && k < hi-lo ==> &s[lo:hi][k] == &s[lo+k]
+requires  hash != RKHashRange(pat, 0, hi-lo) || seq(s[lo:hi]) != pat
 ensures   acc(s, p)
 ensures   NoMatchBefore(seq(s), pat, lo+1)
 decreases

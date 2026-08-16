@@ -1,0 +1,150 @@
+// Enables Gobra in the current file.
+// +gobra
+
+// This file holds the Gobra specification of package bytealg.
+//
+// The module is configured with "only_files_with_header", so Gobra only looks
+// at the files of this package that carry the "// +gobra" header above. Add
+// that header to a .go file of this package to bring it under verification.
+//
+// The Rabin-Karp functions of bytealg.go are specified against the following
+// mathematical abstractions:
+//   - RKHash(q), RKHashRange(q, lo, hi)
+//       Rabin-Karp hash of a byte sequence (of the range q[lo:hi] of a byte
+//       sequence, respectively). The range form avoids sequence slicing in
+//       the recursive definition, which keeps the SMT encoding cheap.
+//   - RKHashRev(q), RKHashRevRange(q, lo, hi)
+//       Rabin-Karp hash of the reverse of a byte sequence (range).
+//   - RKHashStr(s, lo, hi), RKHashStrRev(s, lo, hi)
+//       the analogues for ranges of a string. A string cannot be turned into
+//       a seq[byte] in a pure context: the conversion has to go through
+//       []byte(s), which allocates, and Gobra rejects it in a pure function
+//       ("expected pure expression"). It is accepted in impure ghost code,
+//       but a pure specification function cannot use it, so these
+//       abstractions range over the original string instead.
+//   - PowRK(b, e)            b to the power of e.
+//   - MatchesAt(q, pat, j)   pat occurs in q at position j.
+//   - StrMatchesAt(s, substr, j)
+//       the analogue of MatchesAt for strings that is provable in Gobra's
+//       abstract string model.
+//
+// Note that Gobra does not model wrap-around of uint32 arithmetic (in its
+// default mode, Go's fixed-width integer types are treated as unbounded
+// mathematical integers). The abstractions above are therefore exact,
+// unbounded counterparts of the code's uint32 computations, and all equalities
+// below are equalities of those unbounded values.
+
+package bytealg
+
+// RKHashRange is the Rabin-Karp hash of the byte range q[lo:hi]:
+//   q[lo]*PrimeRK^(hi-lo-1) + ... + q[hi-2]*PrimeRK + q[hi-1]
+ghost
+requires  0 <= lo && lo <= hi && hi <= len(q)
+decreases hi - lo
+pure func RKHashRange(q seq[byte], lo, hi int) uint32 {
+	return lo == hi ? uint32(0) :
+		RKHashRange(q, lo, hi-1)*PrimeRK + uint32(q[hi-1])
+}
+
+// RKHash is the Rabin-Karp hash of the byte sequence q.
+ghost
+decreases
+pure func RKHash(q seq[byte]) uint32 {
+	return RKHashRange(q, 0, len(q))
+}
+
+// RKHashRevRange is the Rabin-Karp hash of the reverse of the byte range
+// q[lo:hi].
+ghost
+requires  0 <= lo && lo <= hi && hi <= len(q)
+decreases hi - lo
+pure func RKHashRevRange(q seq[byte], lo, hi int) uint32 {
+	return lo == hi ? uint32(0) :
+		RKHashRevRange(q, lo+1, hi)*PrimeRK + uint32(q[lo])
+}
+
+// RKHashRev is the Rabin-Karp hash of the reverse of the byte sequence q.
+ghost
+decreases
+pure func RKHashRev(q seq[byte]) uint32 {
+	return RKHashRevRange(q, 0, len(q))
+}
+
+// RKHashStr is the Rabin-Karp hash of the byte range s[lo:hi] of string s.
+ghost
+requires  0 <= lo && lo <= hi && hi <= len(s)
+decreases hi - lo
+pure func RKHashStr(s string, lo, hi int) uint32 {
+	return lo == hi ? uint32(0) :
+		RKHashStr(s, lo, hi-1)*PrimeRK + uint32(s[hi-1])
+}
+
+// RKHashStrRev is the Rabin-Karp hash of the reverse of the byte range
+// s[lo:hi] of string s.
+ghost
+requires  0 <= lo && lo <= hi && hi <= len(s)
+decreases hi - lo
+pure func RKHashStrRev(s string, lo, hi int) uint32 {
+	return lo == hi ? uint32(0) :
+		RKHashStrRev(s, lo+1, hi)*PrimeRK + uint32(s[lo])
+}
+
+// PowRK is b to the power of e.
+ghost
+requires  0 <= e
+decreases e
+pure func PowRK(b uint32, e int) uint32 {
+	return e == 0 ? uint32(1) : PowRK(b, e-1) * b
+}
+
+// MatchesAtRange states that the first k bytes of pat occur in q at position
+// j. Like RKHashRange, this uses a recursive range form rather than sequence
+// slicing: q[j:j+len(pat)] encodes to nested Seq_take/Seq_drop terms, and
+// equalities over those are by far the most expensive obligations in this
+// package.
+ghost
+requires  0 <= j && 0 <= k && k <= len(pat) && j+k <= len(q)
+decreases k
+pure func MatchesAtRange(q, pat seq[byte], j, k int) bool {
+	return k == 0 ? true :
+		(q[j+k-1] == pat[k-1] && MatchesAtRange(q, pat, j, k-1))
+}
+
+// MatchesAt states that the pattern pat occurs in q at position j.
+ghost
+requires  0 <= j && j+len(pat) <= len(q)
+decreases
+opaque
+pure func MatchesAt(q, pat seq[byte], j int) bool {
+	return MatchesAtRange(q, pat, j, len(pat))
+}
+
+// StrMatchesAt is the analogue of MatchesAt for strings. Gobra models strings
+// abstractly (string slicing and indexing are essentially uninterpreted, and
+// equal strings cannot be told apart from equal string identifiers), so a
+// pointwise characterization of a match is not expressible. StrMatchesAt
+// instead captures exactly the test performed by IndexRabinKarp: the window
+// hash matches and the string comparison s[j:j+len(substr)] == substr
+// succeeds.
+ghost
+requires  0 <= j && j+len(substr) <= len(s)
+decreases
+pure func StrMatchesAt(s, substr string, j int) bool {
+	return RKHashStr(s, j, j+len(substr)) == RKHashStr(substr, 0, len(substr)) &&
+		s[j:j+len(substr)] == substr
+}
+
+// NoMatchBefore states that pat occurs at none of the positions 0 <= j < hi
+// of q. It is the recursive counterpart of
+//   forall j int :: 0 <= j && j < hi ==> !MatchesAt(q, pat, j)
+// (see LemmaNoMatchBeforePointwise). The recursive form is used in contracts
+// because a single function application survives into postcondition states,
+// whereas quantified facts over the heap-dependent seq(s)/seq(sep) terms do
+// not reliably re-trigger there.
+ghost
+requires  0 <= hi && hi-1+len(pat) <= len(q)
+decreases hi
+opaque
+pure func NoMatchBefore(q, pat seq[byte], hi int) bool {
+	return hi == 0 ? true : (!MatchesAt(q, pat, hi-1) && NoMatchBefore(q, pat, hi-1))
+}

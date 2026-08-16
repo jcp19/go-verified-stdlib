@@ -14,11 +14,13 @@ conventions that repeatedly come up in review and that a verifier will never com
 1. **Find the Gobra surface.** `.gobra` files, and `.go` files with `//@` or `/*@ … @*/`
    annotations. Read whole files, not diffs alone: a contract only makes sense next to its
    declaration, and a naming problem is only visible next to the package boundary.
-2. **Work through the checks below**, in order. They are roughly sorted by how much damage
+2. **Run `gofmt -l` / `gofmt -d` over the `.go` files** (§3). It is the one check a tool
+   answers for you, and it catches the `//@` vs `// @` prefix drift for free.
+3. **Work through the checks below**, in order. They are roughly sorted by how much damage
    they do.
-3. **Report only real findings.** An empty review is a fine outcome. Do not pad with
+4. **Report only real findings.** An empty review is a fine outcome. Do not pad with
    generic verification advice.
-4. **Propose minimal diffs.** Proofs are brittle; unrelated churn costs the author a
+5. **Propose minimal diffs.** Proofs are brittle; unrelated churn costs the author a
    re-verification cycle and often a proof-stability debugging session. If a rewrite is
    large, say why it is worth it.
 
@@ -55,6 +57,35 @@ pure func (x *node) Value() int { … }
 
 The canonical order is: `trusted`, then `ghost` alone on the first line, then `requires` / `ensures`, then
 `decreases`, then any remaining modifiers (`opaque`), then `pure func`.
+
+### Contract conditions start in the same column
+
+Pad the clause keywords so that the conditions themselves line up. A contract is read as a
+list of assertions; ragged left edges make the reader re-find the start of each one, and
+they hide the shape of the contract (which clauses are long, which are repeated).
+
+```go
+// ✗
+//@ requires p > 0
+//@ preserves acc(sep, p)
+//@ ensures rhash == RKHash(seq(sep))
+//@ decreases
+
+// ✓
+//@ requires  p > 0
+//@ preserves acc(sep, p)
+//@ ensures   rhash == RKHash(seq(sep))
+//@ decreases
+```
+
+`preserves` and `invariant` are the longest keywords at nine characters, so padding every
+keyword to nine puts the conditions in one column across a whole file — loop invariants
+included, not just the function contract. Apply it to `.gobra` files too, where the
+clauses have no `//@` prefix.
+
+This is cosmetic, so raise it once per file rather than once per clause, and skip it
+entirely if the author is mid-proof: re-verifying to land a whitespace change is a bad
+trade.
 
 ### Abstract functions carry `trusted`
 
@@ -118,6 +149,34 @@ infrastructure stays in files the Go toolchain never sees.
 
 The one exception is again the header case: a `.gobra` file may hold specifications for a
 package whose `.go` files are not (yet) verified.
+
+### Run `gofmt` over the `.go` files
+
+Annotations are comments, so nothing in the verifier notices when a `.go` file drifts out
+of gofmt shape — but the Go toolchain, CI and every other reader do. Run it as part of the
+review:
+
+```bash
+gofmt -l ./path/to/pkg      # lists files that need formatting
+gofmt -d ./path/to/pkg      # shows what it wants
+```
+
+Careful with the exit status: `gofmt -l` exits 0 whether or not it lists anything, so
+`gofmt -l pkg && echo clean` reports "clean" for a dirty tree. Check the *output*, not the
+status.
+
+The most common finding is the annotation prefix. gofmt rewrites a top-level `//@` to
+`// @`, and `// @` is the better form to standardize on for exactly that reason: it is
+what the formatter produces, so a file written that way stays clean. Gobra accepts both
+spellings.
+
+gofmt only rewrites comments at the top level, so a formatted file legitimately ends up
+with both forms — `// @` on the clauses attached to declarations, `//@` on the ones
+indented inside function bodies. That mixture is gofmt's doing, not an inconsistency to
+flag.
+
+Re-verify after formatting. It should be a no-op for the proof, and confirming that costs
+one run.
 
 ## 4. Purity and permissions
 

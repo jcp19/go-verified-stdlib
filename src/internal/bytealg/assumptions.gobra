@@ -1,0 +1,42 @@
+// Enables Gobra in the current file.
+// +gobra
+
+// This file holds the trusted members of package bytealg: specifications that
+// Gobra takes on faith rather than proving. Everything here is part of the
+// trusted computing base and deserves scrutiny in review.
+//
+//   - Equal          implemented in per-architecture assembly (equal_*.s),
+//                    which Gobra cannot verify.
+//   - lemmaBitFacts  two facts about Go's >> and & on non-negative operands
+//                    that the PowRK loops rely on.
+
+package bytealg
+
+// Equal reports whether a and b are the same length and contain the same
+// bytes. A nil argument is equivalent to an empty slice.
+//
+// Equal is declared in equal_native.go and implemented in per-architecture
+// assembly files (equal_*.s), which Gobra cannot verify. This bodyless pure
+// function is its trusted specification: two byte slices are Equal exactly
+// when they have the same (mathematical) sequence of bytes.
+trusted
+requires  acc(a) && acc(b)
+ensures   res == (seq(a) == seq(b))
+decreases
+pure func Equal(a, b []byte) (res bool)
+
+// lemmaBitFacts states the two facts about Go's >> and & operators on
+// non-negative operands that the verification of the PowRK loops relies on.
+//
+// ASSUMPTION: this lemma is trusted. Gobra encodes the bitwise operators as
+// uninterpreted functions without any axioms, so these (true) facts of Go's
+// semantics cannot be proven inside Gobra. They are standard: for i >= 0,
+// shifting right by one is division by two, and masking with 1 yields the
+// remainder modulo two.
+ghost
+trusted
+requires  0 <= i
+ensures   i>>1 == i/2
+ensures   i&1 == i%2
+decreases
+func lemmaBitFacts(i int)

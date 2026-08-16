@@ -114,14 +114,30 @@ of preference.
 adds `--recordProofQueries <file.csv>`, which logs every solver interaction
 with its member, source position, category, duration, and outcome. If it isn't
 in your Silicon yet, build that branch — for a real diagnosis it pays for
-itself quickly. Run it on the Viper file of the isolated member:
+itself quickly:
+
+```bash
+git fetch origin pull/966/head:pr966 && git checkout pr966
+git submodule update --init --recursive
+sbt -batch assembly          # -> target/scala-2.13/silicon.jar
+```
+
+If that fails with `NoClassDefFoundError: Could not initialize class
+sbt.internal.parser.SbtParser$`, the pinned sbt is too old to parse your JDK's
+class files (silicon has pinned 1.6.2, whose Scala 2.12 cannot read JDK 21
+bytecode). Bump `project/build.properties` to the version Gobra itself uses —
+1.12.4 works on JDK 21 — rather than installing an older JDK.
+
+Run it on the Viper file of the isolated member:
 
 ```bash
 # --printVpr writes the slices as <input>.chopped<i>.vpr next to the source
 # (chopping happens inside the verification step, so don't add --noVerify —
 # that skips chopping and dumps the whole unsliced package).
 gobra -i pkg/b.go@412 --printVpr
-silicon --numberOfParallelVerifiers 1 \
+# --assertTimeout should match the package's assert_timeout, otherwise queries
+# Gobra cuts off run to completion here and the durations do not correspond
+silicon --numberOfParallelVerifiers 1 --assertTimeout 30000 \
         --recordProofQueries queries.csv pkg/b.go.chopped0.vpr
 python3 .claude/skills/gobra-debug-perf/scripts/summarize_queries.py queries.csv
 ```
@@ -199,6 +215,83 @@ assert forall i int :: 0 <= i && i < len(x[a:b]) ==> &x[a:b][i] == &x[a+i]
 If a member slows down or diverges at a line containing a subslice expression,
 suspect this first; the matching assertion is also the fix, so confirm by
 adding it and re-measuring.
+
+**Sequence slicing inside pure functions.** A spec function whose body slices a
+sequence — `q[j:j+len(pat)] == pat` — encodes to nested `Seq_take`/`Seq_drop`
+terms, and equalities over those are among the most expensive obligations Z3
+sees. The cost lands on every *caller*, not on the function, so it is invisible
+in per-member stats. Diagnostic signal: `FunctionalCorrectness` dominating the
+time, and every hot query's source position containing a `[a:b]` expression.
+See `gobra-improve-perf` for the range-form rewrite.
+
+#### "Assert might fail" does not always mean the property is false
+
+Before treating a failing assertion as a proof gap, check for an
+`assert_timeout` in the package's `gobra.json` (or `--assertTimeout`). With one
+set, a query that exceeds the budget is reported exactly like a refuted one.
+Two tells that you are looking at a timeout rather than a false property:
+
+- The step is trivial — the goal is a loop invariant modulo linear arithmetic,
+  or follows by congruence from a fact asserted on the line above.
+- It is the *last* obligation in a long member, where the context is largest.
+
+Confirm by re-running that member with a much larger `assert_timeout`. If it
+then passes, the property holds and the problem is probably context size. If
+Z3 instead runs for tens of minutes and dies with `ProverInteractionFailed:
+Interaction with prover yielded null` (an out-of-memory kill), more time is not
+the answer either — the proof annotations (and potentially the spec) have to
+change.
+
+#### Invalid triggers: Gobra accepts patterns Viper rejects
+
+Gobra does not run Viper's consistency check, so a quantifier can carry a
+trigger that Silicon considers invalid. Z3 then gets an effectively untriggered
+quantifier — the standard recipe for a blow-up — with no diagnostic anywhere in
+the Gobra output.
+
+`--checkConsistency` exists but **conflicts with `--config`**, which is what
+`gobra-action` and most CI setups use. Get the check by dumping the Viper
+program and running Silicon on it directly:
+
+```bash
+gobra -i pkg/file.go@412 other.gobra -I src -m <module> --printVpr
+silicon --numberOfParallelVerifiers 1 --logLevel ERROR pkg/file.go.chopped0.vpr
+# "{ ... } is not a valid Trigger (file.vpr@811.17--813.58)"
+```
+
+The usual cause is **interpreted arithmetic inside the pattern**. `{&s[i-n:i][k]}`
+is rejected because the slice bound `i-n` becomes a subtraction inside the
+trigger term; `{&s[:n][k]}` on the same buffer is accepted because `0` and `n`
+are not arithmetic. Note it is the *bounds*, not the element indexing, and not
+the `sadd` in the encoding of `&x[k]` — both of those appear in accepted
+triggers too. Program-function applications such as `{MatchesAt(q, pat, j)}`
+are also fine. `gobra-improve-perf` has the fix.
+
+#### Ways to fool yourself while measuring
+
+- **Comparing a run that aborts early against one that completes.** Silicon
+  stops a member at its first failing obligation, so a variant that fails
+  earlier finishes sooner and looks like a speed-up. Only compare runs that
+  fail at the *same* place, or that both succeed. A "26× speed-up" that moved
+  the first error earlier in the function is a 0× speed-up.
+- **Comparing standalone Silicon against Gobra.** The two do not run the same
+  experiment. Gobra passes the package's `assert_timeout`, so an expensive
+  obligation is cut off; standalone Silicon defaults to no budget and lets the
+  same query run for minutes. Gobra also verifies members in parallel, while
+  profiling wants `--numberOfParallelVerifiers 1`. Both differences inflate
+  standalone wall-clock — enough that a 13-minute package took 25 minutes to
+  profile, and a 40-minute cap expired before the CSV was written at all. Pass
+  `--assertTimeout <same value>` when you want the numbers to correspond, and
+  do not read a standalone duration as "how long Gobra spends here".
+- **Trigger stripping is *not* the distortion it looks like.** Deleting a
+  rejected `{...}` from the dumped `.vpr` to get past the consistency check
+  leaves the quantifier untriggered — but a trigger Viper rejects was never
+  usable as a pattern in the first place, so the original was effectively
+  untriggered too. Silicon may infer a different pattern for the stripped
+  version (it says so: "Might not be able to use trigger ..."), so the two are
+  not guaranteed identical, but stripping does not by itself make the program
+  slower. Strip freely to keep debugging; just fix the trigger in the source
+  before drawing conclusions about that quantifier specifically.
 
 ### 6. Get evidence at the Viper / Z3 level when needed
 

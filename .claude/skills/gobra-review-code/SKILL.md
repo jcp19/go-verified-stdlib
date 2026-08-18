@@ -533,6 +533,12 @@ These come up often enough in review to be worth scanning for, but they are judg
 - **`assume` and `trusted` creep.** Every `assume` in non-test code is a hole in the proof.
   Ask whether it can be discharged, and if not, whether it is documented as a standing
   assumption. A PR that adds one deserves an explicit note.
+- **`unfolding` in a contract.** `unfolding P() in e` in a pre- or postcondition sends the
+  reader into the predicate body to find out what the clause even says. A pure getter over
+  the predicate keeps the contract readable at the level it is written at. It is worse on an
+  exported function whose predicate body mentions unexported fields or functions: the clause
+  is then not just hard to read but unusable for clients, which cannot name what it unfolds
+  to (§2).
 - **Postconditions restating a pure function's body.** Gobra reasons about pure functions
   through their bodies, so `ensures res == <the body>` is redundant. It also pins the body
   into the contract, which makes later refactoring a breaking change.

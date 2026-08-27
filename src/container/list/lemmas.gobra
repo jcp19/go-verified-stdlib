@@ -19,8 +19,8 @@ ghost
 preserves a.Mem()
 preserves b.Mem()
 ensures   a != b && a != nil && b != nil
-ensures   a.Es() == old(a.Es()) && a.Vs() == old(a.Vs()) && a.Ini() == old(a.Ini())
-ensures   b.Es() == old(b.Es()) && b.Vs() == old(b.Vs()) && b.Ini() == old(b.Ini())
+ensures   a.Es() == old(a.Es()) && a.Vs() == old(a.Vs()) && a.IsInit() == old(a.IsInit())
+ensures   b.Es() == old(b.Es()) && b.Vs() == old(b.Vs()) && b.IsInit() == old(b.IsInit())
 decreases
 func DistinctLists(a, b *List) {
 	unfold a.Mem()

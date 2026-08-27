@@ -449,20 +449,50 @@ Two invariant rewrites that are about proof *shape* rather than about which
 terms a spec function builds (for that, see §5b):
 
 **Split the invariant by mode instead of relating two structures.** When a
-method can act on its receiver or on a separate object (`other == l` vs
-`other != l`), do not carry one invariant that relates the two abstractions.
-State each mode's fact in its own terms; each is then re-established directly
-by the callee's own postcondition:
+loop can walk its receiver or a separate object (`other == l` vs `other != l`),
+the tempting invariant is one clause phrased over the *walked* object, e.g.
+"the cursor `e` is `other.Es()[i-1]`". That clause is cheap in one mode and
+poisonous in the other: when `other == l`, `other.Es()` is the sequence the
+loop body is *mutating*, so the clause has to be re-derived every iteration by
+pushing the aliasing equality through the callee's postcondition — and because
+it is one clause, the solver repeats that case split for every use of it.
+Stating each mode separately makes each disjunct follow directly from a
+postcondition the callee already gives you, with no aliasing step:
 
 ```go
-//@ invariant i > 0 && other != l ==> e == oes0[i-1]                    // index into other
-//@ invariant i > 0 && other == l ==> l.Es()[len(oes0)-1] == e          // index into l
+// walking `other` to prepend onto `l` (PushFrontList)
+//@ invariant i > 0 && other != l ==> e == oes0[i-1]                // frozen: index the snapshot
+//@ invariant i > 0 && other == l ==> l.Es()[len(oes0)-1] == e      // aliased: index l, at a fixed spot
 ```
 
+The second clause is not a translation of the first. `other != l` freezes
+`other`, so the snapshot `oes0` taken before the loop still describes it. Under
+`other == l` there is nothing frozen to index, so the invariant instead names
+where the cursor sits *in the growing list* — a constant index, because each
+round prepends exactly one element ahead of it. Finding that constant is the
+work; once found, both clauses are one-step.
+
 **Move heap-independent ghost work before the heap writes.** Sequence-shape
-assertions (`len`, index mappings) prove far more cheaply against the
-pre-mutation heap. Compute the new sequences and assert their shape, *then*
-do the pointer surgery, then `fold`.
+assertions (`len`, index mappings) mention only ghost sequences, but proving
+them *after* a pointer write costs far more: the write havocs heap-dependent
+terms, so every fact re-enters through the freshly-updated heap. Build the new
+sequences and assert their shape first, then do the pointer surgery, then
+assign the ghost fields and `fold`:
+
+```go
+//@ unfold l.Mem()
+//@ ghost es2 := l.es[:j+1] ++ seq[*Element]{e} ++ l.es[j+1:]
+//@ assert len(es2) == len(l.es) + 1                             // cheap here…
+//@ assert forall k int :: {es2[k]} j+1 < k && k < len(es2) ==> es2[k] == l.es[k-1]
+e.prev, e.next = at, at.next                                     // …the writes start
+e.prev.next, e.next.prev = e, e
+//@ l.es = es2
+//@ fold l.Mem()
+```
+
+In `container/list` the same assertions placed after the four writes were part
+of what made `insert` and `remove` diverge; hoisting them was one of the
+changes that brought both back to seconds.
 
 ## Things that don't work (don't rediscover them)
 
@@ -482,6 +512,14 @@ do the pointer surgery, then `fold`.
   `container/list` the postcondition that "looked too expensive to keep" was
   cheap under a ghost accumulator, and the **stronger** spec verified in 3m41s
   where the weaker one took 5–9 minutes. Stronger does not imply slower.
+
+  The same asymmetry bites when you weaken a contract for *tidiness* rather
+  than for speed. Dropping `e.next == old(e.next) && e.prev == old(e.prev)`
+  from a postcondition — on the correct reasoning that no client can observe
+  either field — left the caller holding an element with two symbolic pointers,
+  and took a test chain from 1m44 to a 20s assert timeout. Removing a fact the
+  solver was using costs time even when the fact was invisible in the API.
+  Measure a weakening exactly like a strengthening.
 
 - **Assuming breadcrumb assertions are free.** They are a change like any
   other and must be measured. An `assert` restating a whole abstraction

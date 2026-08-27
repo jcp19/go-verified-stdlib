@@ -14,7 +14,7 @@ package list
 
 preserves l.Mem()
 requires  n == len(l.Es())
-ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
+ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.IsInit() == old(l.IsInit())
 ensures   res
 decreases
 func checkListLen(l *List, n int) (res bool) {
@@ -29,7 +29,7 @@ preserves acc(es)
 preserves l.Mem()
 requires  len(es) == len(l.Es())
 requires  forall k int :: {&es[k]} 0 <= k && k < len(es) ==> es[k] == l.Es()[k]
-ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
+ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.IsInit() == old(l.IsInit())
 decreases
 func checkListPointers(l *List, es []*Element) {
 	root := &l.root
@@ -52,7 +52,7 @@ func checkListPointers(l *List, es []*Element) {
 
 	// check internal and external prev/next connections
 	invariant l.Mem()
-	invariant l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
+	invariant l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.IsInit() == old(l.IsInit())
 	invariant acc(es)
 	invariant 0 <= i && i <= len(es)
 	invariant len(es) == len(l.Es())
@@ -101,7 +101,7 @@ preserves acc(es)
 preserves l.Mem()
 requires  len(es) == len(l.Vs())
 requires  forall k int :: {&es[k]} 0 <= k && k < len(es) ==> es[k] === l.Vs()[k]
-ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
+ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.IsInit() == old(l.IsInit())
 decreases
 func checkList(l *List, es []any) {
 	if !checkListLen(l, len(es)) {
@@ -110,7 +110,7 @@ func checkList(l *List, es []any) {
 
 	i := 0
 	invariant l.Mem()
-	invariant l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
+	invariant l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.IsInit() == old(l.IsInit())
 	invariant acc(es)
 	invariant 0 <= i && i <= len(l.Es())
 	invariant len(es) == len(l.Vs())

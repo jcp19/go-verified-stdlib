@@ -13,11 +13,12 @@
 //   - Es() seq[*Element]: the elements of the list, in list order,
 //   - Vs() seq[any]:      the values stored in those elements (Vs()[i] is the
 //                         value of Es()[i]), and
-//   - Ini() bool:         whether the sentinel ring has been initialized.
-// The predicate l.Mem() owns the list header l and all elements of Es(), and
+//   - IsInit() bool:      whether the sentinel ring has been initialized.
+// An element that belongs to no list is described by e.Detached(). The
+// predicate l.Mem() owns the list header l and all elements of Es(), and
 // states that the doubly-linked ring rooted at the sentinel &l.root links
 // exactly those elements, in order. The zero value of List has empty
-// sequences and Ini() == false, so clients may use a zero List directly.
+// sequences and IsInit() == false, so clients may use a zero List directly.
 
 package list
 
@@ -74,14 +75,28 @@ pure func (l *List) Vs() (res seq[any]) {
 	return unfolding l.Mem() in l.vs
 }
 
-// Ini reports whether the sentinel ring of l has been initialized, by Init or
+// IsInit reports whether the sentinel ring of l has been initialized, by Init or
 // by lazyInit. It tells the zero List value apart from an initialized empty
 // list; both have empty Es() and Vs().
 ghost
 requires l.Mem()
 decreases
-pure func (l *List) Ini() bool {
+pure func (l *List) IsInit() bool {
 	return unfolding l.Mem() in l.ini
+}
+
+// Detached reports whether e belongs to no list and is linked to nothing. It
+// is the abstraction the public contracts use for an element the caller owns
+// outright: an element is either inside some list's Mem() or detached and held
+// by the caller. A fresh Element and an element just returned to the caller by
+// Remove are both detached; nothing in the package can produce an element with
+// list == nil and a live neighbour. Clients cannot name the fields this reads,
+// so every contract that talks about a caller-owned element goes through it.
+ghost
+requires acc(e, _)
+decreases
+pure func (e *Element) Detached() bool {
+	return e.list == nil && e.next == nil && e.prev == nil
 }
 
 // MoveSeq returns the result of moving the element at index i of es to just

@@ -12,10 +12,22 @@ getters defined in `spec.gobra`:
 
 - `Es() seq[*Element]` — the elements of the list, in list order,
 - `Vs() seq[any]` — the stored values (`Vs()[i]` is the value of `Es()[i]`),
-- `Ini() bool` — whether the sentinel ring has been initialized (`Init`/
-  `lazyInit`). The zero `List` value gives empty sequences and `Ini() == false`,
+- `IsInit() bool` — whether the sentinel ring has been initialized (`Init`/
+  `lazyInit`). The zero `List` value gives empty sequences and `IsInit() == false`,
   which is exactly the state `lazyInit` recognizes, so clients may use a zero
   `List` directly.
+
+An element that belongs to no list is described by the pure function
+`e.Detached()` — `e.list == nil && e.next == nil && e.prev == nil`. No contract
+names a private field: `list`, `next` and `prev` appear only in the predicate
+body and in the private helper `move`.
+
+The two neighbour conjuncts are invisible to clients (`Next`/`Prev` return
+`nil` unconditionally for a detached element), but they are not free to drop:
+stating only `e.list == nil` leaves the caller of `Remove` holding an element
+with symbolic `next` and `prev`, which took the insert/remove test chain from
+1m44 to an assert timeout. Hiding the fields is the goal; weakening the
+contract is not.
 
 The predicate `l.Mem()` owns the list header and all elements and pins the
 doubly-linked sentinel ring to `Es()`. Because the abstraction lives in the
@@ -38,10 +50,14 @@ shared with clients, methods taking an element or mark still take two ghost
 parameters: the list that currently owns it and its index there. They support
 the three placements a caller can be in — the element belongs to `l`, belongs
 to another list (whose `Mem()` is passed along), or is detached and owned by
-the caller (`acc(e)`, `e.list == nil`, as after `Remove`). The no-op paths of
+the caller (`acc(e) && e.Detached()`, as after `Remove`). The no-op paths of
 the original code ("if e is not an element of l, the list is not modified")
-are covered by the latter two modes; `lemmas.gobra` provides `DistinctLists`
-for clients that need to tell two lists apart.
+are covered by the latter two modes, and both are exercised by the upstream
+tests — `TestIssue4103` removes an element of `l1` from `l2`, `TestRemove`
+removes an already-removed element, and `TestMoveUnknownMark` passes a mark
+from another list — so neither can be ruled out by a precondition without
+losing behaviour the package documents. `lemmas.gobra` provides
+`DistinctLists` for clients that need to tell two lists apart.
 
 ## Notable proof engineering
 
@@ -133,6 +149,7 @@ accepts that spelling, so the file passes both tools.
 java -jar gobra.jar --config <repo>/src/container/list
 ```
 
-(Requires Z3 on `Z3_EXE`.) The whole package verifies in under four minutes
-on 4 cores. The most expensive members are the two `Push*List` loops and
-`move`, whose proofs cross-case over element positions.
+(Requires Z3 on `Z3_EXE`.) The whole package verifies in about five minutes on
+4 cores. The most expensive members are the two `Push*List` loops, `move`, and
+the `testListInsert`/`testListInsertAfter` chains, whose proofs cross-case over
+element positions.

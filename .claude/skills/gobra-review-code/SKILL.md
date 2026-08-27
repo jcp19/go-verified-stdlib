@@ -542,11 +542,12 @@ be exported, along with every pure function a contract mentions:
 ```go
 type List struct { /*@ ghost es seq[*Element] @*/ }  // private field: fine
 
-ghost requires l.Mem() decreases
+ghost requires l.Mem()
+decreases
 pure func (l *List) Es() seq[*Element] { … }         // must be exported: contracts use it
 ```
 
-Two things to check on such a package:
+Three things to check on such a package:
 
 - **A read-only method that takes the whole predicate.** `preserves l.Mem()`
   does not pin the abstraction the way a parameterized predicate did, so such
@@ -560,6 +561,28 @@ Two things to check on such a package:
 - **Relations sealed inside the predicate.** If contracts index into a derived
   sequence, the getter should export what makes that well-formed —
   `ensures len(res) == len(l.Es())` — rather than each caller re-proving it.
+- **A public contract naming a private field.** A client cannot write
+  `e.list == nil`, so a contract that does is unusable outside the package.
+  The fix is a pure function, *not* a deletion:
+
+  ```go
+  ghost requires acc(e, _)
+  decreases
+  pure func (e *Element) Detached() bool { return e.list == nil && e.next == nil && e.prev == nil }
+  ```
+
+  Note the trap. Some of those conjuncts look like pure encapsulation leakage —
+  no client can observe `e.next`, since `Next()` returns `nil` unconditionally
+  for a detached element — so the tempting move is to drop them and export only
+  `e.list == nil`. Do not: unobservable to a *client* is not unobservable to the
+  *solver*. Deleting the two neighbour conjuncts from `Remove`'s postcondition
+  in `container/list` left the caller holding an element with symbolic `next`
+  and `prev`, and the test chain that removes and re-inserts three times went
+  from 1m44 to a 20s assert timeout. Fold the framing into the pure function
+  instead — same hidden fields, same strength.
+
+  Permission is not a field mention: keep `acc(e)`. An intrusive structure has
+  to hand ownership back somewhere.
 
 ## 9. Recurring findings worth a second look
 

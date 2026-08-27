@@ -234,18 +234,36 @@ debug: you cannot decompose or walk something that is not a statement. Turn it
 into one.
 
 **Postcondition** (*Insert Failing Postcondition*) — copy the failing clause to
-an `assert` just before each `return`. Name the results first if they are
-unnamed; naming return parameters is one of the sanctioned code edits in
-`gobra-specify-verify`.
+an `assert` at each return, **in the state the postcondition is actually checked
+in**. That qualification is the whole difficulty. `return -1` assigns the result
+parameter *as part of* the `return`, so an `assert` placed textually above it
+runs while `res` still holds its zero value. The probe then tests a claim nobody
+asked about — and for a clause shaped `res == -1 ==> …` it passes *vacuously*,
+because `res` is `0` there and the implication is trivially true. A probe that
+reports success while testing nothing is the worst outcome available.
+
+Split the return so the assignment happens first:
 
 ```go
 //@ ensures res == -1 ==> NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
-func IndexRabinKarpBytes(s, sep []byte) (res int) {
+func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
     ...
+    res = -1
     //@ assert res == -1 ==> NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
-    return -1
+    return
 }
 ```
+
+Name the results first if they are unnamed — naming return parameters is one of
+the sanctioned code edits in `gobra-specify-verify`, and the `return e` →
+`res = e; return` rewrite is a probe like any other, so §6 takes it back out. A
+naked `return` needs no rewrite: the results already hold their values.
+
+Two more traps at a return. With several results, assign them all
+(`r1, r2 = a, b`) before the assert, since a postcondition normally relates
+them. And if the function `defer`s anything that writes a named result, the
+postcondition is checked *after* the deferred call runs, so no point in the body
+is the right one — work from the deferred function's contract instead.
 
 `old(e)` keeps its meaning inside the body — it is the function's pre-state — so
 postconditions containing `old` transfer unchanged.
@@ -261,10 +279,27 @@ postconditions containing `old` transfer unchanged.
 This is the action that converts a useless "precondition of call might not hold"
 into a pinpointed conjunct — decompose it (§3.1) and you are done in two runs.
 
-**Loop invariant** — the error already tells you which end to probe:
-*not established* → assert the clause immediately **before** the loop; *not
-preserved* → assert it at the **end** of the body (the invariant is assumed at
-the top, so anywhere earlier tests nothing).
+**Loop invariant** — the error tells you which end to probe, but in a 3-clause
+`for` the init and post statements sit *between* the body and the invariant
+check, so a literal copy of the clause tests the wrong state — the same trap as
+at a `return`. The invariant is checked at the loop head, i.e. after the init on
+entry and after the post statement on every later iteration. (This repo's own
+contracts show it: `for i := 0; i < len(sep); i++` carries
+`invariant 0 <= i && i <= len(sep)`, and `i == len(sep)` is only reachable after
+the final `i++`.)
+
+- *not established* → assert the clause **before** the loop, substituting the
+  init statement's value for the loop variable, which is not in scope yet: for
+  `for i := 0; …`, probe the clause with `0` for `i`. That substitution is the
+  weakest-precondition step of §3.3.
+- *not preserved* → assert the clause at the **end of the body**, substituting
+  the post statement's effect: `i+1` for `i` when the post is `i++`. Better,
+  move the post statement into the body — `for i := n; i < len(s); {` with `i++`
+  inline, exactly as `bytealg.go:181` does — which makes the end of the body and
+  the invariant check the same state and removes the substitution entirely.
+
+Asserting the invariant anywhere earlier in the body tests nothing: it is
+assumed at the top.
 
 **Pure function** (`The pure function is not well-formed`) — a pure function has
 no statements, so the only probe available is the expression-level form:
@@ -569,6 +604,14 @@ to step 4 with the *precondition* as the goal, or to §2 Q3.
   succeeds is added to the context for everything after it, so decomposing an
   assertion can make a *later* obligation pass that used to fail. Nothing is
   established until the member verifies with the probes removed.
+- **Put the probe where the state is, not where the statement is.** An `assert`
+  reads the state at the point it sits, and that is not always the point the
+  obligation is checked: at `return e` the result parameter still holds its zero
+  value, at the end of a 3-clause `for` body the post statement has not run yet,
+  and after a `fold` the fields are inside the predicate. A probe in the wrong
+  state usually *passes* — vacuously — and a vacuous pass reads exactly like a
+  real one. Before believing a probe that succeeded, check that it could have
+  failed: negate it, or place it somewhere you know it must fail.
 - **An error that "disappears" may have moved.** Silicon stops a member at its
   first failing obligation, so a probe inserted before the real failure can hide
   it. Check that the member now *verifies*, not merely that the message changed.

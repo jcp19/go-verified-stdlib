@@ -482,9 +482,31 @@ work; once found, both clauses are one-step.
   gave 30.4s → 29.7s, and the same move in `remove` gave 27.6s → 29.4s. Both
   are inside the noise band. Order the ghost code for readability instead.
 
-  Keep the general lesson though: "this touches no heap location, so where it
-  sits cannot matter" is a hypothesis about the solver, not a fact about it —
-  and so is its opposite. Measure before writing either into a proof.
+  The rule is self-defeating, which is visible from the obligations alone.
+  Silicon evaluates such an assertion to a goal over local sequence terms —
+  no heap read, no permission check — so moving it past a field write leaves
+  the **goal term identical** and only grows the context (`π_before ⊆
+  π_after`). Two things follow: hoisting can never fix a failure, only shave
+  cost; and the cost it shaves is not "number of new facts" but *number of new
+  ground terms matching a trigger of a quantifier reachable from the goal*.
+  Four scalar writes contribute about one (`es0[inv(at)]`, from resolving
+  `acc(at.next)` against the quantified chunk) — and the breadcrumb asserts
+  that name the neighbours already fired those quantifiers at the same
+  indices, before the writes, in *both* arrangements.
+
+  So: if the work really is heap-independent, a write cannot invalidate it and
+  there is nothing to buy. If it is heap-*dependent* — it mentions `l.Es()` or
+  a field — placement matters enormously, because a heap-dependent function
+  application carries a snapshot argument and `l.Es()` after a write is a
+  different term. But that case is not "heap-independent ghost work"; it is
+  the ordinary discipline of snapshotting before you mutate. The name asserts
+  the precondition under which the justification cannot apply.
+
+  Where the context-size channel *does* pay is when the intervening code adds
+  volume or fresh symbols: a loop (its head havocs everything outside the
+  invariant, so facts are lost rather than diluted — hoisting is mandatory
+  there, not an optimization), a method call, QP writes inside a loop, or an
+  intervening `unfold` of another predicate.
 
 - **Selecting heap algorithms per member before the member verifies.** You
   usually cannot predict whether a function exhibits disjunctive aliasing, so

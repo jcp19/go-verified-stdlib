@@ -445,8 +445,8 @@ instantiations. The mental model is identical.
 
 ### 7. Reshape the loop invariant
 
-Two invariant rewrites that are about proof *shape* rather than about which
-terms a spec function builds (for that, see §5b):
+An invariant rewrite that is about proof *shape* rather than about which terms
+a spec function builds (for that, see §5b).
 
 **Split the invariant by mode instead of relating two structures.** When a
 loop can walk its receiver or a separate object (`other == l` vs `other != l`),
@@ -472,29 +472,19 @@ where the cursor sits *in the growing list* — a constant index, because each
 round prepends exactly one element ahead of it. Finding that constant is the
 work; once found, both clauses are one-step.
 
-**Move heap-independent ghost work before the heap writes.** Sequence-shape
-assertions (`len`, index mappings) mention only ghost sequences, but proving
-them *after* a pointer write costs far more: the write havocs heap-dependent
-terms, so every fact re-enters through the freshly-updated heap. Build the new
-sequences and assert their shape first, then do the pointer surgery, then
-assign the ghost fields and `fold`:
-
-```go
-//@ unfold l.Mem()
-//@ ghost es2 := l.es[:j+1] ++ seq[*Element]{e} ++ l.es[j+1:]
-//@ assert len(es2) == len(l.es) + 1                             // cheap here…
-//@ assert forall k int :: {es2[k]} j+1 < k && k < len(es2) ==> es2[k] == l.es[k-1]
-e.prev, e.next = at, at.next                                     // …the writes start
-e.prev.next, e.next.prev = e, e
-//@ l.es = es2
-//@ fold l.Mem()
-```
-
-In `container/list` the same assertions placed after the four writes were part
-of what made `insert` and `remove` diverge; hoisting them was one of the
-changes that brought both back to seconds.
-
 ## Things that don't work (don't rediscover them)
+
+- **Moving heap-independent ghost work before the heap writes.** Plausible
+  story, no effect. The idea: sequence-shape assertions (`len`, index mappings)
+  mention only ghost sequences, so hoisting them above the pointer surgery
+  should prove them against a smaller context. Measured on `container/list`,
+  moving the block of six such assertions across the four writes in `insert`
+  gave 30.4s → 29.7s, and the same move in `remove` gave 27.6s → 29.4s. Both
+  are inside the noise band. Order the ghost code for readability instead.
+
+  Keep the general lesson though: "this touches no heap location, so where it
+  sits cannot matter" is a hypothesis about the solver, not a fact about it —
+  and so is its opposite. Measure before writing either into a proof.
 
 - **Selecting heap algorithms per member before the member verifies.** You
   usually cannot predict whether a function exhibits disjunctive aliasing, so

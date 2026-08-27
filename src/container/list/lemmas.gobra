@@ -15,6 +15,12 @@ package list
 // predicates, so clients that call a method of one list with an element or
 // mark of another need this lemma to discharge the mode dispatch of the
 // contract.
+//
+// Unlike the read-only methods of the package, this lemma genuinely needs
+// write permission and must not be relaxed to acc(a.Mem(), R): two shares of
+// R sum to well under 1, so holding acc(a.Mem(), R) && acc(b.Mem(), R) is
+// perfectly consistent with a == b and proves nothing. The "nothing changed"
+// postconditions below are the price of taking write, not an oversight.
 ghost
 preserves a.Mem()
 preserves b.Mem()

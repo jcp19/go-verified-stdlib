@@ -78,7 +78,16 @@ losing behaviour the package documents. `lemmas.gobra` provides
   test file needed no changes when they were introduced. (An earlier revision
   of this document called those clauses "the main cost of the ghost-field
   design". That was wrong: they were a symptom of asking for `write`, not of
-  ghost fields.) Their postconditions index `old(l.Es())`, since the ghost
+  ghost fields.) A single package-wide `R` does not compose *within* the
+  package, though: a read-only helper holding exactly `acc(l.Mem(), R)` has
+  nothing left after calling `Front`, which asks for `R` too. That is why
+  `checkListLen`, `checkListPointers` and `checkList` in `list_test.gobra`
+  still take `preserves l.Mem()` and carry the "nothing changed" clauses; a
+  `ghost p perm` parameter with `requires p > 0` would fix it, at the cost of
+  threading `p` through the whole test file. `DistinctLists` is a different
+  case and genuinely needs write — two `R` shares sum well below 1, so they
+  are consistent with `a == b` and prove nothing.
+  Their postconditions index `old(l.Es())`, since the ghost
   index names a pre-state position and the post-state length is unconstrained
   once the framing clause is gone.
 - `Vs()` exports `len(res) == len(l.Es())` as a postcondition. The relation is

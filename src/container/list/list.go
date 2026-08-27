@@ -108,8 +108,8 @@ func (l *List) Init() (ret *List) {
 }
 
 // New returns an initialized list.
-// @ ensures ret != nil && ret.Mem()
-// @ ensures ret.Es() == seq[*Element]{} && ret.Vs() == seq[any]{} && ret.IsInit()
+// @ ensures   ret != nil && ret.Mem()
+// @ ensures   ret.Es() == seq[*Element]{} && ret.Vs() == seq[any]{} && ret.IsInit()
 // @ decreases
 func New() (ret *List) {
 	l := new(List)
@@ -119,8 +119,8 @@ func New() (ret *List) {
 
 // Len returns the number of elements of list l.
 // The complexity is O(1).
-// @ requires l.Mem()
-// @ ensures  res == len(l.Es())
+// @ requires  l.Mem()
+// @ ensures   res == len(l.Es())
 // @ decreases
 // @ pure
 func (l *List) Len() (res int) {

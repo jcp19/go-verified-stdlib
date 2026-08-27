@@ -57,7 +57,7 @@ pred (l *List) Mem() {
 
 // Es returns the elements of l, in list order.
 ghost
-requires l.Mem()
+requires  l.Mem()
 decreases
 pure func (l *List) Es() seq[*Element] {
 	return unfolding l.Mem() in l.es
@@ -68,8 +68,8 @@ pure func (l *List) Es() seq[*Element] {
 // hidden inside the folded predicate and is needed to show that contracts
 // indexing into Vs are well-formed.
 ghost
-requires l.Mem()
-ensures  len(res) == len(l.Es())
+requires  l.Mem()
+ensures   len(res) == len(l.Es())
 decreases
 pure func (l *List) Vs() (res seq[any]) {
 	return unfolding l.Mem() in l.vs
@@ -79,7 +79,7 @@ pure func (l *List) Vs() (res seq[any]) {
 // by lazyInit. It tells the zero List value apart from an initialized empty
 // list; both have empty Es() and Vs().
 ghost
-requires l.Mem()
+requires  l.Mem()
 decreases
 pure func (l *List) IsInit() bool {
 	return unfolding l.Mem() in l.ini
@@ -93,7 +93,7 @@ pure func (l *List) IsInit() bool {
 // list == nil and a live neighbour. Clients cannot name the fields this reads,
 // so every contract that talks about a caller-owned element goes through it.
 ghost
-requires acc(e, _)
+requires  acc(e)
 decreases
 pure func (e *Element) Detached() bool {
 	return e.list == nil && e.next == nil && e.prev == nil
@@ -104,8 +104,8 @@ pure func (e *Element) Detached() bool {
 // It matches the effect of the internal method l.move(es[i], at) with
 // at == (j == -1 ? &l.root : es[j]).
 ghost
-requires 0 <= i && i < len(es)
-requires -1 <= j && j < len(es)
+requires  0 <= i && i < len(es)
+requires  -1 <= j && j < len(es)
 decreases
 pure func MoveSeq(es seq[*Element], i, j int) seq[*Element] {
 	return i == j ? es :
@@ -116,8 +116,8 @@ pure func MoveSeq(es seq[*Element], i, j int) seq[*Element] {
 
 // MoveSeqV is MoveSeq for the value sequence.
 ghost
-requires 0 <= i && i < len(vs)
-requires -1 <= j && j < len(vs)
+requires  0 <= i && i < len(vs)
+requires  -1 <= j && j < len(vs)
 decreases
 pure func MoveSeqV(vs seq[any], i, j int) seq[any] {
 	return i == j ? vs :

@@ -155,9 +155,9 @@ func TestList() {
 }
 
 // testListMoves is the continuation of TestList.
-requires l != nil && l.Mem()
-requires l.Es() == seq[*Element]{e1, e3, e4}
-requires l.Vs() == seq[any]{int(1), int(3), string("banana")}
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e3, e4}
+requires  l.Vs() == seq[any]{int(1), int(3), string("banana")}
 decreases
 func testListMoves(l *List, e1, e3, e4 *Element) {
 	l.MoveToFront(e3, l, 1) // move from middle
@@ -182,9 +182,9 @@ func testListMoves(l *List, e1, e3, e4 *Element) {
 
 // testListInsert is the continuation of TestList; the test is split into a
 // few functions to keep the verification time of each part manageable.
-requires l != nil && l.Mem()
-requires l.Es() == seq[*Element]{e1, e4, e3}
-requires l.Vs() == seq[any]{int(1), string("banana"), int(3)}
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e4, e3}
+requires  l.Vs() == seq[any]{int(1), string("banana"), int(3)}
 decreases
 func testListInsert(l *List, e1, e3, e4 *Element) {
 	e2 := l.InsertBefore(int(2), e1, l, 0) // insert before front
@@ -201,9 +201,9 @@ func testListInsert(l *List, e1, e3, e4 *Element) {
 }
 
 // testListInsertAfter is the continuation of TestList.
-requires l != nil && l.Mem()
-requires l.Es() == seq[*Element]{e1, e4, e3}
-requires l.Vs() == seq[any]{int(1), string("banana"), int(3)}
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e4, e3}
+requires  l.Vs() == seq[any]{int(1), string("banana"), int(3)}
 decreases
 func testListInsertAfter(l *List, e1, e3, e4 *Element) {
 	e2 := l.InsertAfter(int(2), e1, l, 0) // insert after front
@@ -220,9 +220,9 @@ func testListInsertAfter(l *List, e1, e3, e4 *Element) {
 }
 
 // testListIterate is the continuation of TestList.
-requires l != nil && l.Mem()
-requires l.Es() == seq[*Element]{e1, e4, e3}
-requires l.Vs() == seq[any]{int(1), string("banana"), int(3)}
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e4, e3}
+requires  l.Vs() == seq[any]{int(1), string("banana"), int(3)}
 decreases
 func testListIterate(l *List, e1, e3, e4 *Element) {
 	// Check standard iteration.
@@ -288,9 +288,9 @@ func TestExtending() {
 
 // testExtendingBack is the continuation of TestExtending; the test is split
 // into a few functions to keep the verification time of each part manageable.
-requires l1 != nil && l2 != nil && l1 != l2
-requires l1.Mem() && l1.Vs() == seq[any]{int(1), int(2), int(3)}
-requires l2.Mem() && l2.Vs() == seq[any]{int(4), int(5)}
+requires  l1 != nil && l2 != nil && l1 != l2
+requires  l1.Mem() && l1.Vs() == seq[any]{int(1), int(2), int(3)}
+requires  l2.Mem() && l2.Vs() == seq[any]{int(4), int(5)}
 decreases
 func testExtendingBack(l1, l2 *List) {
 	l3 := New()
@@ -305,9 +305,9 @@ func testExtendingBack(l1, l2 *List) {
 }
 
 // testExtendingFront is the continuation of TestExtending.
-requires l1 != nil && l2 != nil && l1 != l2
-requires l1.Mem() && l1.Vs() == seq[any]{int(1), int(2), int(3)}
-requires l2.Mem() && l2.Vs() == seq[any]{int(4), int(5)}
+requires  l1 != nil && l2 != nil && l1 != l2
+requires  l1.Mem() && l1.Vs() == seq[any]{int(1), int(2), int(3)}
+requires  l2.Mem() && l2.Vs() == seq[any]{int(4), int(5)}
 decreases
 func testExtendingFront(l1, l2 *List) {
 	l3 := New()
@@ -326,9 +326,9 @@ func testExtendingFront(l1, l2 *List) {
 
 // testExtendingSelf is the continuation of TestExtending; it covers the cases
 // where a list is appended to itself, and where an empty list is appended.
-requires l1 != nil && l2 != nil && l1 != l2
-requires l1.Mem() && l1.Vs() == seq[any]{int(1), int(2), int(3)}
-requires l2.Mem() && l2.Vs() == seq[any]{int(4), int(5)}
+requires  l1 != nil && l2 != nil && l1 != l2
+requires  l1.Mem() && l1.Vs() == seq[any]{int(1), int(2), int(3)}
+requires  l2.Mem() && l2.Vs() == seq[any]{int(4), int(5)}
 decreases
 func testExtendingSelf(l1, l2 *List) {
 	l3 := New()
@@ -433,9 +433,9 @@ func TestMove() {
 
 // testMoveRest is the continuation of TestMove; the test is split in two to
 // keep the verification time of each part manageable.
-requires l != nil && l.Mem()
-requires l.Es() == seq[*Element]{e1, e2, e3, e4}
-requires l.Vs() == seq[any]{int(1), int(3), int(2), int(4)}
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e2, e3, e4}
+requires  l.Vs() == seq[any]{int(1), int(3), int(2), int(4)}
 decreases
 func testMoveRest(l *List, e1, e2, e3, e4 *Element) {
 	l.MoveBefore(e4, e1, l, 3, 0)

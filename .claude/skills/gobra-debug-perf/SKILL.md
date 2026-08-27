@@ -245,6 +245,37 @@ in per-member stats. Diagnostic signal: `FunctionalCorrectness` dominating the
 time, and every hot query's source position containing a `[a:b]` expression.
 See `gobra-improve-perf` for the range-form rewrite.
 
+**Sequence slicing in a loop invariant.** The same hazard, one level up. An
+invariant that pins part of an abstraction with `s[:k]` or `s[k:]` makes every
+iteration re-derive the slice through those same take/drop axioms. Prefer a
+full-sequence equality against a ghost accumulator:
+
+```go
+//@ invariant l.Es() == es0 ++ nes && len(nes) == len(oes0) - i   // cheap
+//@ invariant l.Es()[:len(es0)] == es0                            // diverges
+```
+
+In `container/list` this one substitution took `PushFrontList` from "did not
+terminate" to a whole-package run of under four minutes — and the accumulator
+form is the *stronger* spec, since it names the new elements. Same root cause
+as the pure-function case above; `gobra-improve-perf` §5b collects both fixes.
+
+**A quantifier body that mentions a neighbouring index.** In a linked
+structure it is natural to write the linkage as
+
+```go
+forall i int :: {es[i]} 0 <= i && i < len(es)-1 ==> es[i].next == es[i+1]
+```
+
+but the body introduces the fresh term `es[i+1]`, which matches the trigger
+again and lets Z3 chain instantiations along the whole sequence. Quantify over
+the pair instead, so the body introduces no new index term:
+
+```go
+forall i, k int :: {es[i], es[k]} 0 <= i && k == i+1 && k < len(es) ==>
+    es[i].next == es[k] && es[k].prev == es[i]
+```
+
 #### "Assert might fail" does not always mean the property is false
 
 Before treating a failing assertion as a proof gap, check for an
@@ -317,7 +348,12 @@ trigger in place.
   discharged in milliseconds. This is not a rare edge case; it is the normal
   failure mode of a member that is close to the budget. Use the isolated loop
   for iteration speed, never for the verdict, and re-run the package before
-  believing a fix.
+  believing a fix. When it does happen, rule out the two cheap explanations
+  before rewriting anything: `--chop N` (if chopping changes nothing, the
+  context is not reducible) and a much larger `--packageTimeout` (Silicon
+  verifies members in parallel, so a heavy member can simply be starved on a
+  small machine). In `container/list` both were dead ends, and that is what
+  licensed giving up on flags and re-encoding the invariant instead.
 - **Comparing a run that aborts early against one that completes.** Silicon
   stops a member at its first failing obligation, so a variant that fails
   earlier finishes sooner and looks like a speed-up. Only compare runs that
@@ -341,7 +377,6 @@ trigger in place.
   not guaranteed identical, but stripping does not by itself make the program
   slower. Strip freely to keep debugging; just fix the trigger in the source
   before drawing conclusions about that quantifier specifically.
-
 ### 6. Get evidence at the Viper / Z3 level when needed
 
 For the top one or two members, run Silicon directly on the dumped `.vpr` — it

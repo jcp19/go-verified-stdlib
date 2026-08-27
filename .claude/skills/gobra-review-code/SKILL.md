@@ -392,6 +392,14 @@ proof below it may need the same treatment. That is a real diff, so propose it w
 function is genuinely read-only and part of an API, and skip it for a package-private helper
 with one caller.
 
+One follow-on to expect when you also delete the now-redundant "nothing moved"
+postcondition: it was holding the post-state abstraction to the pre-state one, and a
+postcondition that indexes by a ghost parameter was relying on that link for its
+*well-formedness*. `ensures i > 0 ==> ret == l.Es()[i-1]` stops being well-formed once the
+link is gone, because nothing bounds `len(l.Es())` in the post-state. Index the pre-state
+instead — `old(l.Es())[i-1]` — which is what the contract meant anyway, since `i` names a
+pre-state position.
+
 #### Why not `acc(x, _)`
 
 The wildcard is the tempting shortcut, and it breaks callers in a way a constant does not:
@@ -524,6 +532,57 @@ Definitions of ghost types of the package under verification, predicate definiti
 that are not lemmas should be defined in the `spec.gobra` file. Lemmas should be defined in a separate file
 (`lemmas.gobra`). Any trusted ghost member or member that, for some reason is not fully verified, should be
 in `assumptions.gobra`. This is a super strict check!!!!
+
+## 8b. Ghost state on a struct
+
+When a type carries its abstraction in ghost fields, the fields themselves stay
+private (like any other field) but the **getters are part of the API** and must
+be exported, along with every pure function a contract mentions:
+
+```go
+type List struct { /*@ ghost es seq[*Element] @*/ }  // private field: fine
+
+ghost requires l.Mem()
+decreases
+pure func (l *List) Es() seq[*Element] { … }         // must be exported: contracts use it
+```
+
+Three things to check on such a package:
+
+- **A read-only method that takes the whole predicate.** `preserves l.Mem()`
+  does not pin the abstraction the way a parameterized predicate did, so such
+  a method needs an explicit `ensures l.Es() == old(l.Es()) && …` — without it,
+  a client calling `Front()` loses everything it knew about the list. Read that
+  clause as a **symptom**, not a fix: it exists only because the method asked
+  for `write`. Send the author to §4.3 instead. With `preserves acc(l.Mem(), R)`
+  the caller keeps a share, frames the list itself, and the clause disappears
+  from the contract entirely — in `container/list` this removed it from
+  `Front`, `Back`, `Next` and `Prev` with no change to any caller.
+- **Relations sealed inside the predicate.** If contracts index into a derived
+  sequence, the getter should export what makes that well-formed —
+  `ensures len(res) == len(l.Es())` — rather than each caller re-proving it.
+- **A public contract naming a private field.** A client cannot write
+  `e.list == nil`, so a contract that does is unusable outside the package.
+  The fix is a pure function, *not* a deletion:
+
+  ```go
+  ghost requires acc(e, _)
+  decreases
+  pure func (e *Element) Detached() bool { return e.list == nil && e.next == nil && e.prev == nil }
+  ```
+
+  Note the trap. Some of those conjuncts look like pure encapsulation leakage —
+  no client can observe `e.next`, since `Next()` returns `nil` unconditionally
+  for a detached element — so the tempting move is to drop them and export only
+  `e.list == nil`. Do not: unobservable to a *client* is not unobservable to the
+  *solver*. Deleting the two neighbour conjuncts from `Remove`'s postcondition
+  in `container/list` left the caller holding an element with symbolic `next`
+  and `prev`, and the test chain that removes and re-inserts three times went
+  from 1m44 to a 20s assert timeout. Fold the framing into the pure function
+  instead — same hidden fields, same strength.
+
+  Permission is not a field mention: keep `acc(e)`. An intrusive structure has
+  to hand ownership back somewhere.
 
 ## 9. Recurring findings worth a second look
 

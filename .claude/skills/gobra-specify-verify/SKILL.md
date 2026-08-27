@@ -103,6 +103,101 @@ signature `pure func (p Packet, s []byte) bool` that **may** have access to `p.M
   a. you get feedback through the `gobra-review-code` skill, which looks out for common Gobra mistakes. Note that some pieces of feedback may be irrelevant. Be strict about which pieces of feedback are worth implementing, especially those that have to do with how predicates are organized.
   b. in case there are tests for the current package, you can use them as a yardstick for the quality of your specifications. You should reproduce the tests in a separate .gobra file (if the original is called `x_test.go`, you create a new file `x_test.gobra`). These files should have the same package clause as the implementation files (rather than a test package). It should be marked for verification with `// +gobra`. The idea is that you create a copy of each testing method and implement it, removing references to the testing framework (e.g., deleting `testing.T` parameters) and replacing whatever calls to the testing framework by `assert` statements. You may need to add proof annotations, but you may never add assumptions to make the proofs go through. This will tell you whether your specs are too strict (e.g., a call in a test does not satisfy the precondition, even though it is perfectly benign), or whether the functional specs are too weak (for example, a postcondition is not strong enough to prove an assertion in the program). You are not allowed to change the testing code other than the transformations I mentioned, except for one transform: you often see tests structured as maps, and the tests iterate through the maps (whose values contain the inputs to a test and the expected result). In those cases, I prefer that you create a separate function for the tests, where each function has only one of the entries of the map. NOTE: for now, the transformation of test functions needs to be done by hand. In the future, I may be able to create a deterministic transformation. The outcome of this step should be a concise list of points to incorporate. You use this feedback and start refining the specifications (go back to step 4) until (1) tests can be verified, (2) you fail to do it after 6 iterations. If you need to create new lemmas to prove the correctness of the tests, feel free to make reusable versions of the lemmas available to clients.
 
+### Review and tests catch different things — do both
+
+Step 5's two checks are not redundant. The tests exercise the modes a client
+actually uses, so they find specs that are too weak *there*; the review pass
+finds gaps in the modes no test happens to hit. In `container/list` the tests
+were all green while `Remove` still failed to state that the list stays
+initialized when the removed element belongs to it — a real gap, invisible to
+every test, found only by reading the contract.
+
+Also: if you ever weaken a postcondition because it "costs too much", treat
+that as a diagnosis to check, not a conclusion. The expensive thing is usually
+the *encoding of the invariant* that supports the postcondition, not the
+postcondition itself — see `gobra-improve-perf`.
+
+### Carrying the abstraction: ghost fields beat predicate parameters
+
+For a mutable struct, prefer **ghost fields plus pure getters** over a
+predicate parameterized by the abstraction. Both work; the ghost-field form
+keeps call sites clean, which matters most in the tests.
+
+```go
+type List struct {
+	root   Element
+	length int
+	/*@ ghost es seq[*Element]; ghost vs seq[any]; ghost ini bool @*/
+}
+
+pred (l *List) Mem() { acc(l) && l.length == len(l.es) && /* … */ }
+
+ghost
+requires l.Mem()
+decreases
+pure func (l *List) Vs() seq[any] { return unfolding l.Mem() in l.vs }
+```
+
+```go
+// parameterized:  l.PushBack(3, seq[*Element]{e1, e2}, seq[any]{1, 2}, true)
+// ghost fields:   l.PushBack(3)
+```
+
+Four things to get right, each of which will otherwise cost you a debugging cycle:
+
+- **List the predicate first in a loop invariant.** Silicon consumes invariant
+  conjuncts left to right, so a getter placed before its own predicate cannot
+  be framed. `invariant l.Mem()` then `invariant … l.Es() …`, never the reverse.
+  (The same applies inside a single `ensures`.)
+- **Give read-only methods read permission, and "nothing changed" comes free.**
+  A parameterized `preserves l.Mem(es, vs, ini)` pinned the values in its own
+  arguments; `preserves l.Mem()` does not, so a read-only method that takes the
+  *whole* predicate owes an explicit
+  `ensures l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && …`. Do not pay
+  that: ask for a share instead.
+
+  ```go
+  // ✗ takes everything, so it must spell out that it changed nothing
+  // @ preserves l.Mem()
+  // @ ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.Ini() == old(l.Ini())
+  // @ ensures   len(l.Es()) > 0 ==> ret == l.Es()[0]
+
+  // ✓ caller keeps a share and frames the list itself
+  // @ preserves acc(l.Mem(), R)
+  // @ ensures   len(old(l.Es())) > 0 ==> ret == old(l.Es())[0]
+  ```
+
+  with `ghost const R perm = 1/1000` in `spec.gobra` (see `gobra-review-code`
+  §4.3). Callers holding the full predicate need no changes at all. One
+  wrinkle: once the framing clause is gone, the post-state length is
+  unconstrained, so a postcondition indexing by a ghost index must say
+  `old(l.Es())[i]` — that index named a pre-state position anyway.
+- **Export relations that contracts depend on.** A fact sealed in the folded
+  predicate is invisible to well-formedness checks. If contracts index into
+  `Vs()`, the getter must carry the length relation:
+  `ensures len(res) == len(l.Es())`.
+- **Keep a ghost index parameter for intrusive structures.** Where an element
+  is shared with clients (`e.list`), the owning object and the element's index
+  still have to be passed; only the sequences disappear.
+
+### Translating tests: two traps
+
+- **Untyped constants boxed into `any`.** Gobra does not apply Go's
+  default-type rule, so a bare `1` stored in an `any` has unknown dynamic type
+  and a later `x.(int)` cannot be discharged. Write `int(1)` / `string("s")` —
+  identical Go meaning.
+- **Long straight-line tests.** A 200-line test with dozens of calls is far
+  more expensive than the same calls split across functions. Split eagerly into
+  continuation functions whose precondition states the expected abstraction;
+  this doubles as documentation of what the test believes at that point.
+
+```gobra
+requires l != nil && l.Mem()
+requires l.Es() == seq[*Element]{e1, e4, e3}
+decreases
+func testListInsert(l *List, e1, e3, e4 *Element) { /* … */ }
+```
+
 ### Important notes:
 - Timeouts may happen. Always make sure you start running verification with a short `assertTimeout` (e.g., 3000 to 5000 ms) and increase it over time if need be. However, if there are such slow assertions, you should debug them early, rather than letting these performance problems compound. If available, the skill `gobra-debug-perf` helps localize causes of bad performance and the skill `gobra-improve-perf` provides suggestions to fix it.
 - disclaimer: any of the previous guidelines may be broken if there is a good reason: for example, we may not need to find an abstraction for a type when no interesting properties are proven on it. You may introduce assumptions if there is absolutely no way to prove relevant properties without them and the assumed conditions cannot be proven by Gobra, even though you are super confident they hold.

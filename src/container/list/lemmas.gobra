@@ -1,0 +1,37 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// This file holds lemmas about package container/list that are useful to
+// clients of the package.
+
+package list
+
+// DistinctLists proves that two lists whose memory predicates are held
+// separately are distinct. This fact is hidden inside the (folded)
+// predicates, so clients that call a method of one list with an element or
+// mark of another need this lemma to discharge the mode dispatch of the
+// contract.
+//
+// Unlike the read-only methods of the package, this lemma genuinely needs
+// write permission and must not be relaxed to acc(a.Mem(), R): two shares of
+// R sum to well under 1, so holding acc(a.Mem(), R) && acc(b.Mem(), R) is
+// perfectly consistent with a == b and proves nothing. The "nothing changed"
+// postconditions below are the price of taking write, not an oversight.
+ghost
+preserves a.Mem()
+preserves b.Mem()
+ensures   a != b && a != nil && b != nil
+ensures   a.Es() == old(a.Es()) && a.Vs() == old(a.Vs()) && a.IsInit() == old(a.IsInit())
+ensures   b.Es() == old(b.Es()) && b.Vs() == old(b.Vs()) && b.IsInit() == old(b.IsInit())
+decreases
+func DistinctLists(a, b *List) {
+	unfold a.Mem()
+	unfold b.Mem()
+	assert a != b
+	fold a.Mem()
+	fold b.Mem()
+}

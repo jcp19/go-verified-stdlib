@@ -1,0 +1,526 @@
+// Copyright 2009 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// This file is the Gobra translation of list_test.go. Each test function
+// mirrors the corresponding Go test; calls into the testing framework are
+// replaced by assert statements. Each list carries its own abstraction in
+// ghost fields, so the tests read almost like the originals.
+
+package list
+
+preserves l.Mem()
+requires  n == len(l.Es())
+ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.IsInit() == old(l.IsInit())
+ensures   res
+decreases
+func checkListLen(l *List, n int) (res bool) {
+	if v := l.Len(); v != n {
+		assert false // t.Errorf("l.Len() = %d, want %d", n, len)
+		return false
+	}
+	return true
+}
+
+preserves acc(es)
+preserves l.Mem()
+requires  len(es) == len(l.Es())
+requires  forall k int :: {&es[k]} 0 <= k && k < len(es) ==> es[k] == l.Es()[k]
+ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.IsInit() == old(l.IsInit())
+decreases
+func checkListPointers(l *List, es []*Element) {
+	root := &l.root
+
+	if !checkListLen(l, len(es)) {
+		return
+	}
+
+	// zero length lists must be the zero value or properly initialized (sentinel circle)
+	if len(es) == 0 {
+		unfold l.Mem()
+		assert len(l.es) == 0
+		if l.root.next != nil && l.root.next != root || l.root.prev != nil && l.root.prev != root {
+			assert false // t.Errorf("l.root.next = %p, l.root.prev = %p; both should both be nil or %p", ...)
+		}
+		fold l.Mem()
+		return
+	}
+	// len(es) > 0
+
+	// check internal and external prev/next connections
+	invariant l.Mem()
+	invariant l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.IsInit() == old(l.IsInit())
+	invariant acc(es)
+	invariant 0 <= i && i <= len(es)
+	invariant len(es) == len(l.Es())
+	invariant forall k int :: {&es[k]} 0 <= k && k < len(es) ==> es[k] == l.Es()[k]
+	decreases len(es) - i
+	for i := 0; i < len(es); i += 1 {
+		e := es[i]
+		prev := root
+		var Prev *Element = nil
+		if i > 0 {
+			prev = es[i-1]
+			Prev = prev
+		}
+		unfold l.Mem()
+		assert l.es[i] == e
+		assert i > 0 ==> l.es[i].prev == l.es[i-1]
+		assert i == 0 ==> l.es[i].prev == root
+		if p := e.prev; p != prev {
+			assert false // t.Errorf("elt[%d](%p).prev = %p, want %p", ...)
+		}
+		fold l.Mem()
+		if p := e.Prev(l, i); p != Prev {
+			assert false // t.Errorf("elt[%d](%p).Prev() = %p, want %p", ...)
+		}
+
+		next := root
+		var Next *Element = nil
+		if i < len(es)-1 {
+			next = es[i+1]
+			Next = next
+		}
+		unfold l.Mem()
+		assert i < len(es)-1 ==> l.es[i].next == l.es[i+1]
+		assert i == len(es)-1 ==> l.es[i].next == root
+		if n := e.next; n != next {
+			assert false // t.Errorf("elt[%d](%p).next = %p, want %p", ...)
+		}
+		fold l.Mem()
+		if n := e.Next(l, i); n != Next {
+			assert false // t.Errorf("elt[%d](%p).Next() = %p, want %p", ...)
+		}
+	}
+}
+
+preserves acc(es)
+preserves l.Mem()
+requires  len(es) == len(l.Vs())
+requires  forall k int :: {&es[k]} 0 <= k && k < len(es) ==> es[k] === l.Vs()[k]
+ensures   l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.IsInit() == old(l.IsInit())
+decreases
+func checkList(l *List, es []any) {
+	if !checkListLen(l, len(es)) {
+		return
+	}
+
+	i := 0
+	invariant l.Mem()
+	invariant l.Es() == old(l.Es()) && l.Vs() == old(l.Vs()) && l.IsInit() == old(l.IsInit())
+	invariant acc(es)
+	invariant 0 <= i && i <= len(l.Es())
+	invariant len(es) == len(l.Vs())
+	invariant forall k int :: {&es[k]} 0 <= k && k < len(es) ==> es[k] === l.Vs()[k]
+	invariant i < len(l.Es()) ==> e == l.Es()[i] && e != nil
+	invariant i == len(l.Es()) ==> e == nil
+	decreases len(l.Es()) - i
+	for e := l.Front(); e != nil; e = e.Next(l, i-1) {
+		unfold l.Mem()
+		le := e.Value
+		fold l.Mem()
+		assert le === es[i] // le != es[i] would make the original test call t.Errorf
+		i += 1
+	}
+}
+
+func TestList() {
+	l := New()
+	checkListPointers(l, []*Element{})
+
+	// Single element list
+	e := l.PushFront("a")
+	checkListPointers(l, []*Element{e})
+	l.MoveToFront(e, l, 0)
+	checkListPointers(l, []*Element{e})
+	l.MoveToBack(e, l, 0)
+	checkListPointers(l, []*Element{e})
+	l.Remove(e, l, 0)
+	checkListPointers(l, []*Element{})
+
+	// Bigger list
+	e2 := l.PushFront(int(2))
+	e1 := l.PushFront(int(1))
+	e3 := l.PushBack(int(3))
+	e4 := l.PushBack(string("banana"))
+	checkListPointers(l, []*Element{e1, e2, e3, e4})
+
+	l.Remove(e2, l, 1)
+	checkListPointers(l, []*Element{e1, e3, e4})
+
+	testListMoves(l, e1, e3, e4)
+}
+
+// testListMoves is the continuation of TestList.
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e3, e4}
+requires  l.Vs() == seq[any]{int(1), int(3), string("banana")}
+decreases
+func testListMoves(l *List, e1, e3, e4 *Element) {
+	l.MoveToFront(e3, l, 1) // move from middle
+	checkListPointers(l, []*Element{e3, e1, e4})
+
+	l.MoveToFront(e1, l, 1)
+	l.MoveToBack(e3, l, 1) // move from middle
+	checkListPointers(l, []*Element{e1, e4, e3})
+
+	l.MoveToFront(e3, l, 2) // move from back
+	checkListPointers(l, []*Element{e3, e1, e4})
+	l.MoveToFront(e3, l, 0) // should be no-op
+	checkListPointers(l, []*Element{e3, e1, e4})
+
+	l.MoveToBack(e3, l, 0) // move from front
+	checkListPointers(l, []*Element{e1, e4, e3})
+	l.MoveToBack(e3, l, 2) // should be no-op
+	checkListPointers(l, []*Element{e1, e4, e3})
+
+	testListInsert(l, e1, e3, e4)
+}
+
+// testListInsert is the continuation of TestList; the test is split into a
+// few functions to keep the verification time of each part manageable.
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e4, e3}
+requires  l.Vs() == seq[any]{int(1), string("banana"), int(3)}
+decreases
+func testListInsert(l *List, e1, e3, e4 *Element) {
+	e2 := l.InsertBefore(int(2), e1, l, 0) // insert before front
+	checkListPointers(l, []*Element{e2, e1, e4, e3})
+	l.Remove(e2, l, 0)
+	e2 = l.InsertBefore(int(2), e4, l, 1) // insert before middle
+	checkListPointers(l, []*Element{e1, e2, e4, e3})
+	l.Remove(e2, l, 1)
+	e2 = l.InsertBefore(int(2), e3, l, 2) // insert before back
+	checkListPointers(l, []*Element{e1, e4, e2, e3})
+	l.Remove(e2, l, 2)
+
+	testListInsertAfter(l, e1, e3, e4)
+}
+
+// testListInsertAfter is the continuation of TestList.
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e4, e3}
+requires  l.Vs() == seq[any]{int(1), string("banana"), int(3)}
+decreases
+func testListInsertAfter(l *List, e1, e3, e4 *Element) {
+	e2 := l.InsertAfter(int(2), e1, l, 0) // insert after front
+	checkListPointers(l, []*Element{e1, e2, e4, e3})
+	l.Remove(e2, l, 1)
+	e2 = l.InsertAfter(int(2), e4, l, 1) // insert after middle
+	checkListPointers(l, []*Element{e1, e4, e2, e3})
+	l.Remove(e2, l, 2)
+	e2 = l.InsertAfter(int(2), e3, l, 2) // insert after back
+	checkListPointers(l, []*Element{e1, e4, e3, e2})
+	l.Remove(e2, l, 3)
+
+	testListIterate(l, e1, e3, e4)
+}
+
+// testListIterate is the continuation of TestList.
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e4, e3}
+requires  l.Vs() == seq[any]{int(1), string("banana"), int(3)}
+decreases
+func testListIterate(l *List, e1, e3, e4 *Element) {
+	// Check standard iteration.
+	sum := 0
+	ghost var k int = 0
+	invariant l.Mem()
+	invariant 0 <= k && k <= 3
+	invariant l.Es() == seq[*Element]{e1, e4, e3}
+	invariant l.Vs() == seq[any]{int(1), string("banana"), int(3)}
+	invariant k < 3 ==> e5 == l.Es()[k] && e5 != nil
+	invariant k == 3 ==> e5 == nil
+	invariant sum == (k == 0 ? 0 : (k == 3 ? 4 : 1))
+	decreases 3 - k
+	for e5 := l.Front(); e5 != nil; e5 = e5.Next(l, k-1) {
+		unfold l.Mem()
+		assert k == 0 ==> e5 == e1 && e5.Value === int(1)
+		assert k == 1 ==> e5 == e4 && e5.Value === string("banana")
+		assert k == 2 ==> e5 == e3 && e5.Value === int(3)
+		if i, ok := e5.Value.(int); ok {
+			sum += i
+		}
+		fold l.Mem()
+		k = k + 1
+	}
+	if sum != 4 {
+		assert false // t.Errorf("sum over l = %d, want 4", sum)
+	}
+
+	// Clear all elements by iterating
+	ghost var es0 seq[*Element] = seq[*Element]{e1, e4, e3}
+	ghost var vs0 seq[any] = seq[any]{int(1), string("banana"), int(3)}
+	var next *Element
+	ghost var k2 int = 0
+	invariant l.Mem()
+	invariant 0 <= k2 && k2 <= 3
+	invariant l.Es() == es0[k2:] && l.Vs() == vs0[k2:]
+	invariant k2 < 3 ==> e6 == es0[k2] && e6 != nil
+	invariant k2 == 3 ==> e6 == nil
+	decreases 3 - k2
+	for e6 := l.Front(); e6 != nil; e6 = next {
+		assert (es0[k2:])[0] == es0[k2]
+		next = e6.Next(l, 0)
+		l.Remove(e6, l, 0)
+		assert (es0[k2:])[1:] == es0[k2+1:] && (vs0[k2:])[1:] == vs0[k2+1:]
+		k2 = k2 + 1
+	}
+	checkListPointers(l, []*Element{})
+}
+
+func TestExtending() {
+	l1 := New()
+	l2 := New()
+
+	l1.PushBack(int(1))
+	l1.PushBack(int(2))
+	l1.PushBack(int(3))
+
+	l2.PushBack(int(4))
+	l2.PushBack(int(5))
+
+	testExtendingBack(l1, l2)
+}
+
+// testExtendingBack is the continuation of TestExtending; the test is split
+// into a few functions to keep the verification time of each part manageable.
+requires  l1 != nil && l2 != nil && l1 != l2
+requires  l1.Mem() && l1.Vs() == seq[any]{int(1), int(2), int(3)}
+requires  l2.Mem() && l2.Vs() == seq[any]{int(4), int(5)}
+decreases
+func testExtendingBack(l1, l2 *List) {
+	l3 := New()
+	DistinctLists(l3, l1)
+	l3.PushBackList(l1)
+	checkList(l3, []any{int(1), int(2), int(3)})
+	DistinctLists(l3, l2)
+	l3.PushBackList(l2)
+	checkList(l3, []any{int(1), int(2), int(3), int(4), int(5)})
+
+	testExtendingFront(l1, l2)
+}
+
+// testExtendingFront is the continuation of TestExtending.
+requires  l1 != nil && l2 != nil && l1 != l2
+requires  l1.Mem() && l1.Vs() == seq[any]{int(1), int(2), int(3)}
+requires  l2.Mem() && l2.Vs() == seq[any]{int(4), int(5)}
+decreases
+func testExtendingFront(l1, l2 *List) {
+	l3 := New()
+	DistinctLists(l3, l2)
+	l3.PushFrontList(l2)
+	checkList(l3, []any{int(4), int(5)})
+	DistinctLists(l3, l1)
+	l3.PushFrontList(l1)
+	checkList(l3, []any{int(1), int(2), int(3), int(4), int(5)})
+
+	checkList(l1, []any{int(1), int(2), int(3)})
+	checkList(l2, []any{int(4), int(5)})
+
+	testExtendingSelf(l1, l2)
+}
+
+// testExtendingSelf is the continuation of TestExtending; it covers the cases
+// where a list is appended to itself, and where an empty list is appended.
+requires  l1 != nil && l2 != nil && l1 != l2
+requires  l1.Mem() && l1.Vs() == seq[any]{int(1), int(2), int(3)}
+requires  l2.Mem() && l2.Vs() == seq[any]{int(4), int(5)}
+decreases
+func testExtendingSelf(l1, l2 *List) {
+	l3 := New()
+	DistinctLists(l3, l1)
+	l3.PushBackList(l1)
+	checkList(l3, []any{int(1), int(2), int(3)})
+	l3.PushBackList(l3)
+	checkList(l3, []any{int(1), int(2), int(3), int(1), int(2), int(3)})
+
+	l4 := New()
+	DistinctLists(l4, l1)
+	l4.PushFrontList(l1)
+	checkList(l4, []any{int(1), int(2), int(3)})
+	l4.PushFrontList(l4)
+	checkList(l4, []any{int(1), int(2), int(3), int(1), int(2), int(3)})
+
+	l5 := New()
+	DistinctLists(l1, l5)
+	l1.PushBackList(l5)
+	checkList(l1, []any{int(1), int(2), int(3)})
+	DistinctLists(l1, l5)
+	l1.PushFrontList(l5)
+	checkList(l1, []any{int(1), int(2), int(3)})
+}
+
+func TestRemove() {
+	l := New()
+	e1 := l.PushBack(int(1))
+	e2 := l.PushBack(int(2))
+	checkListPointers(l, []*Element{e1, e2})
+	e := l.Front()
+	l.Remove(e, l, 0)
+	checkListPointers(l, []*Element{e2})
+	l.Remove(e, nil, 0)
+	checkListPointers(l, []*Element{e2})
+}
+
+func TestIssue4103() {
+	l1 := New()
+	l1.PushBack(int(1))
+	c2 := l1.PushBack(int(2))
+
+	l2 := New()
+	l2.PushBack(int(3))
+	l2.PushBack(int(4))
+
+	e := l1.Front()
+	DistinctLists(l1, l2)
+	l2.Remove(e, l1, 0) // l2 should not change because e is not an element of l2
+	if n := l2.Len(); n != 2 {
+		assert false // t.Errorf("l2.Len() = %d, want 2", n)
+	}
+
+	l1.InsertBefore(int(8), e, l1, 0)
+	if n := l1.Len(); n != 3 {
+		assert false // t.Errorf("l1.Len() = %d, want 3", n)
+	}
+	assert c2 != nil
+}
+
+func TestIssue6349() {
+	l := New()
+	l.PushBack(int(1))
+	l.PushBack(int(2))
+
+	e := l.Front()
+	l.Remove(e, l, 0)
+	assert e.Value === int(1) // e.Value != 1 would make the original test call t.Errorf
+	if e.Next(nil, 0) != nil {
+		assert false // t.Errorf("e.Next() != nil")
+	}
+	if e.Prev(nil, 0) != nil {
+		assert false // t.Errorf("e.Prev() != nil")
+	}
+}
+
+func TestMove() {
+	l := New()
+	e1 := l.PushBack(int(1))
+	e2 := l.PushBack(int(2))
+	e3 := l.PushBack(int(3))
+	e4 := l.PushBack(int(4))
+
+	l.MoveAfter(e3, e3, l, 2, 2)
+	checkListPointers(l, []*Element{e1, e2, e3, e4})
+	l.MoveBefore(e2, e2, l, 1, 1)
+	checkListPointers(l, []*Element{e1, e2, e3, e4})
+
+	l.MoveAfter(e3, e2, l, 2, 1)
+	checkListPointers(l, []*Element{e1, e2, e3, e4})
+	l.MoveBefore(e2, e3, l, 1, 2)
+	checkListPointers(l, []*Element{e1, e2, e3, e4})
+
+	l.MoveBefore(e2, e4, l, 1, 3)
+	checkListPointers(l, []*Element{e1, e3, e2, e4})
+	tmp1 := e2
+	e2 = e3
+	e3 = tmp1
+
+	testMoveRest(l, e1, e2, e3, e4)
+}
+
+// testMoveRest is the continuation of TestMove; the test is split in two to
+// keep the verification time of each part manageable.
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e2, e3, e4}
+requires  l.Vs() == seq[any]{int(1), int(3), int(2), int(4)}
+decreases
+func testMoveRest(l *List, e1, e2, e3, e4 *Element) {
+	l.MoveBefore(e4, e1, l, 3, 0)
+	checkListPointers(l, []*Element{e4, e1, e2, e3})
+	tmp2 := e4
+	e4 = e3
+	e3 = e2
+	e2 = e1
+	e1 = tmp2
+
+	l.MoveAfter(e4, e1, l, 3, 0)
+	checkListPointers(l, []*Element{e1, e4, e2, e3})
+	tmp3 := e4
+	e4 = e3
+	e3 = e2
+	e2 = tmp3
+
+	l.MoveAfter(e2, e3, l, 1, 2)
+	checkListPointers(l, []*Element{e1, e3, e2, e4})
+}
+
+// Test PushFront, PushBack, PushFrontList, PushBackList with uninitialized List
+func TestZeroList() {
+	l1 := new(List)
+	fold l1.Mem()
+	l1.PushFront(int(1))
+	checkList(l1, []any{int(1)})
+
+	l2 := new(List)
+	fold l2.Mem()
+	l2.PushBack(int(1))
+	checkList(l2, []any{int(1)})
+
+	l3 := new(List)
+	fold l3.Mem()
+	DistinctLists(l3, l1)
+	l3.PushFrontList(l1)
+	checkList(l3, []any{int(1)})
+
+	l4 := new(List)
+	fold l4.Mem()
+	DistinctLists(l4, l2)
+	l4.PushBackList(l2)
+	checkList(l4, []any{int(1)})
+}
+
+// Test that a list l is not modified when calling InsertBefore with a mark that is not an element of l.
+func TestInsertBeforeUnknownMark() {
+	var l@ List
+	fold l.Mem()
+	l.PushBack(int(1))
+	l.PushBack(int(2))
+	l.PushBack(int(3))
+	l.InsertBefore(int(1), new(Element), nil, 0)
+	checkList(&l, []any{int(1), int(2), int(3)})
+}
+
+// Test that a list l is not modified when calling InsertAfter with a mark that is not an element of l.
+func TestInsertAfterUnknownMark() {
+	var l@ List
+	fold l.Mem()
+	l.PushBack(int(1))
+	l.PushBack(int(2))
+	l.PushBack(int(3))
+	l.InsertAfter(int(1), new(Element), nil, 0)
+	checkList(&l, []any{int(1), int(2), int(3)})
+}
+
+// Test that a list l is not modified when calling MoveAfter or MoveBefore with a mark that is not an element of l.
+func TestMoveUnknownMark() {
+	var l1@ List
+	fold l1.Mem()
+	e1 := l1.PushBack(int(1))
+
+	var l2@ List
+	fold l2.Mem()
+	e2 := l2.PushBack(int(2))
+
+	DistinctLists(&l1, &l2)
+	l1.MoveAfter(e1, e2, &l2, 0, 0)
+	checkList(&l1, []any{int(1)})
+	checkList(&l2, []any{int(2)})
+
+	DistinctLists(&l1, &l2)
+	l1.MoveBefore(e1, e2, &l2, 0, 0)
+	checkList(&l1, []any{int(1)})
+	checkList(&l2, []any{int(2)})
+}

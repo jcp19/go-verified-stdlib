@@ -403,6 +403,21 @@ worth knowing, but prefer renaming when it applies: a helper only fires where
 you mention it, and the terms Silicon generates internally (e.g. `ShArrayloc`
 when computing permissions) will not mention it.
 
+**The same trap in a loop invariant.** Pinning part of an abstraction with
+`s[:k]` or `s[k:]` in an invariant re-derives the slice through those same
+take/drop axioms on every iteration. Track a ghost accumulator and state a
+full-sequence equality instead:
+
+```go
+//@ invariant l.Es() == es0 ++ nes && len(nes) == len(oes0) - i   // cheap
+//@ invariant l.Es()[:len(es0)] == es0                            // diverges
+```
+
+On `container/list` this took `PushFrontList` from not terminating to a
+whole-package run under four minutes, and the accumulator form is the
+*stronger* spec — it names the new elements, which the method returns as a
+ghost result.
+
 ### 6. Borrowed wisdom from Dafny and Verus
 
 These verifiers hit the same wall and document the same cures — useful both as
@@ -428,7 +443,70 @@ The Gobra analogue of "isolate assertions" is `-i file@line` plus `outline`;
 the analogue of `--profile` is a Silicon prover log analyzed for quantifier
 instantiations. The mental model is identical.
 
+### 7. Reshape the loop invariant
+
+An invariant rewrite that is about proof *shape* rather than about which terms
+a spec function builds (for that, see §5b).
+
+**Split the invariant by mode instead of relating two structures.** When a
+loop can walk its receiver or a separate object (`other == l` vs `other != l`),
+the tempting invariant is one clause phrased over the *walked* object, e.g.
+"the cursor `e` is `other.Es()[i-1]`". That clause is cheap in one mode and
+poisonous in the other: when `other == l`, `other.Es()` is the sequence the
+loop body is *mutating*, so the clause has to be re-derived every iteration by
+pushing the aliasing equality through the callee's postcondition — and because
+it is one clause, the solver repeats that case split for every use of it.
+Stating each mode separately makes each disjunct follow directly from a
+postcondition the callee already gives you, with no aliasing step:
+
+```go
+// walking `other` to prepend onto `l` (PushFrontList)
+//@ invariant i > 0 && other != l ==> e == oes0[i-1]                // frozen: index the snapshot
+//@ invariant i > 0 && other == l ==> l.Es()[len(oes0)-1] == e      // aliased: index l, at a fixed spot
+```
+
+The second clause is not a translation of the first. `other != l` freezes
+`other`, so the snapshot `oes0` taken before the loop still describes it. Under
+`other == l` there is nothing frozen to index, so the invariant instead names
+where the cursor sits *in the growing list* — a constant index, because each
+round prepends exactly one element ahead of it. Finding that constant is the
+work; once found, both clauses are one-step.
+
 ## Things that don't work (don't rediscover them)
+
+- **Moving heap-independent ghost work before the heap writes.** Plausible
+  story, no effect. The idea: sequence-shape assertions (`len`, index mappings)
+  mention only ghost sequences, so hoisting them above the pointer surgery
+  should prove them against a smaller context. Measured on `container/list`,
+  moving the block of six such assertions across the four writes in `insert`
+  gave 30.4s → 29.7s, and the same move in `remove` gave 27.6s → 29.4s. Both
+  are inside the noise band. Order the ghost code for readability instead.
+
+  The rule is self-defeating, which is visible from the obligations alone.
+  Silicon evaluates such an assertion to a goal over local sequence terms —
+  no heap read, no permission check — so moving it past a field write leaves
+  the **goal term identical** and only grows the context (`π_before ⊆
+  π_after`). Two things follow: hoisting can never fix a failure, only shave
+  cost; and the cost it shaves is not "number of new facts" but *number of new
+  ground terms matching a trigger of a quantifier reachable from the goal*.
+  Four scalar writes contribute about one (`es0[inv(at)]`, from resolving
+  `acc(at.next)` against the quantified chunk) — and the breadcrumb asserts
+  that name the neighbours already fired those quantifiers at the same
+  indices, before the writes, in *both* arrangements.
+
+  So: if the work really is heap-independent, a write cannot invalidate it and
+  there is nothing to buy. If it is heap-*dependent* — it mentions `l.Es()` or
+  a field — placement matters enormously, because a heap-dependent function
+  application carries a snapshot argument and `l.Es()` after a write is a
+  different term. But that case is not "heap-independent ghost work"; it is
+  the ordinary discipline of snapshotting before you mutate. The name asserts
+  the precondition under which the justification cannot apply.
+
+  Where the context-size channel *does* pay is when the intervening code adds
+  volume or fresh symbols: a loop (its head havocs everything outside the
+  invariant, so facts are lost rather than diluted — hoisting is mandatory
+  there, not an optimization), a method call, QP writes inside a loop, or an
+  intervening `unfold` of another predicate.
 
 - **Selecting heap algorithms per member before the member verifies.** You
   usually cannot predict whether a function exhibits disjunctive aliasing, so
@@ -439,6 +517,28 @@ instantiations. The mental model is identical.
 - **Buying speed with `trusted`, `assume`, or deleted postconditions.** That is
   not an optimization, it is a hole in the proof. If you ever do this
   deliberately as a temporary measure, say so loudly in the report.
+
+  A weakened postcondition is the subtler version: still sound, but a spec
+  regression, and usually a symptom rather than a cause. Before you drop a
+  clause, re-encode the invariant that supports it (§5b, §7) — in
+  `container/list` the postcondition that "looked too expensive to keep" was
+  cheap under a ghost accumulator, and the **stronger** spec verified in 3m41s
+  where the weaker one took 5–9 minutes. Stronger does not imply slower.
+
+  The same asymmetry bites when you weaken a contract for *tidiness* rather
+  than for speed. Dropping `e.next == old(e.next) && e.prev == old(e.prev)`
+  from a postcondition — on the correct reasoning that no client can observe
+  either field — left the caller holding an element with two symbolic pointers,
+  and took a test chain from 1m44 to a 20s assert timeout. Removing a fact the
+  solver was using costs time even when the fact was invisible in the API.
+  Measure a weakening exactly like a strengthening.
+
+- **Assuming breadcrumb assertions are free.** They are a change like any
+  other and must be measured. An `assert` restating a whole abstraction
+  equality can cost more than the step it was meant to cheapen: adding six of
+  them to a test chain took a package from 4m02 to 6m28 *and* pushed a new
+  failure elsewhere. Useful breadcrumbs name one small fact (a neighbour, an
+  index); wholesale restatements of the state usually are not.
 - **Chasing a member you haven't measured.** Slow *predicates* and small pure
   functions are frequently the real culprits behind a slow method, because their
   cost is paid at every unfold or call site.

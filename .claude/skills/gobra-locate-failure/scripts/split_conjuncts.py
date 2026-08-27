@@ -20,6 +20,13 @@ which is how a "decomposition" ends up reporting a failure that was never
 there. This script finds the weakest top-level operator instead of assuming
 one, and names the action to use when that operator is not `&&`.
 
+Precedence is not the only trap. Between impure assertions Viper's `&&` is a
+SEPARATING conjunction, so splitting one `assert` into several is not always
+meaning-preserving: `acc(x.f, 1/2) && acc(x.f, 1/2)` needs a whole permission,
+while two asserts of `acc(x.f, 1/2)` each pass while holding only half. The
+script flags conjuncts it can see are impure. Splitting a contract CLAUSE is
+always safe -- several clauses mean their conjunction.
+
 It is a scanner, not a parser: it tracks brackets and string literals, and it
 knows the operators, but it does not type-check. Sanity-check the output.
 """
@@ -44,6 +51,10 @@ TRAILING_BODY = {
 }
 
 OPEN, CLOSE = "([{", ")]}"
+# Impure (resource) assertions the scanner can recognize. A bare predicate
+# instance -- `l.Mem()` -- is also impure but is not syntactically distinct from
+# a boolean call, so it cannot be detected here.
+IMPURE_RE = re.compile(r"\bacc\s*\(|--\*")
 
 
 def scan(expr):
@@ -239,6 +250,18 @@ def main():
     if kind == "conjunction":
         for p in parts:
             print(f"{args.prefix}{p}")
+        impure = [p for p in parts if IMPURE_RE.search(p)]
+        if impure and "assert" in args.prefix:
+            print("\nWARNING: separating conjunction. These conjuncts are impure:")
+            for p in impure:
+                print(f"  {p}")
+            print("  Between impure assertions `&&` adds permissions up, so N asserts are a\n"
+                  "  WEAKER check than the conjunction whenever one location is covered twice\n"
+                  "  (same field, overlapping quantified ranges, two instances of one predicate).\n"
+                  "  Safe for disjoint resources. Splitting a contract CLAUSE is always safe --\n"
+                  '  re-run with --prefix "//@ invariant " (or requires/ensures) to do that instead.\n'
+                  "  A bare predicate instance such as `l.Mem()` is also impure and is NOT\n"
+                  "  detected here: only `acc(...)` and wands are.")
         nested = [(p, analyse(p)) for p in parts]
         follow = [(p, k, s) for p, (k, s, _) in nested if k not in ("atomic", "empty")]
         if follow:

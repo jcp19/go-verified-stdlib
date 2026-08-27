@@ -78,8 +78,8 @@ interleaved with progress output.
 | `Assert might fail` | An `assert` you wrote | §3.1, then §3.3 |
 | `Postcondition might not hold` | An `ensures` clause at a return | §3.2 |
 | `Precondition of call ... might not hold` | A callee's `requires` at a call site | §3.2 |
-| `Loop invariant might not be established` | Invariant on entry to the loop | §3.2 (assert before the loop) |
-| `Loop invariant might not be preserved` | Invariant at the end of the body | §3.2 (assert at the end of the body) |
+| `Loop invariant might not be established` | Invariant at the loop head, on entry | §3.2 (assert before the loop, init value substituted) |
+| `Loop invariant might not be preserved` | Invariant at the loop head, after the post statement | §3.2 (assert at the end of the body, post statement substituted) |
 | `Fold might fail` / `Unfold might fail` | The predicate body / the instance | §3.11 |
 | `Assignment might fail` | Permission to the assigned location | §3.11 |
 | `Expression may cause integer overflow` | Bounds of a subexpression | §3.1 on the arithmetic |
@@ -99,13 +99,15 @@ interleaved with progress output.
 | `Quantified resource <e> might not be injective.` | A quantified permission whose receiver expression is not visibly injective |
 | `Divisor <e> might be zero.` | Well-definedness |
 | `Termination measure might not decrease.` | The measure, not the property |
-| `Assertion <e> definitely holds.` | You ran a `refute` — see §2 |
+| `Assertion <e> definitely holds.` | You ran a `refute`: the state is unreachable, or the assertion always holds (§5) |
 
 Two facts about the error *list* that mislead people constantly:
 
 - **Silicon stops a member at its first failing obligation.** The list is a
-  lower bound. Fixing one error routinely reveals three more, and that is not a
-  regression.
+  lower bound: fixing one error routinely reveals three more, and that is not a
+  regression. You do not have to peel them off one run at a time — dump the
+  Viper program and raise the limit (§2 Q1):
+  `silicon --numberOfErrorsToReport 0 pkg/b.go.chopped0.vpr`.
 - **A reason mentioning permission is never a missing-fact problem.** Do not
   reach for lemmas and asserts; go to §3.11.
 
@@ -114,31 +116,34 @@ Two facts about the error *list* that mislead people constantly:
 Every action below assumes the failure is a genuine proof gap. Three cheap
 checks decide whether it is. Answer them in this order; each is one run.
 
-### Q1. Is the failing state reachable?
+### Q1. Is the failure on a path that can actually happen?
 
-If the path condition is inconsistent, everything above the failure verified
-*vacuously* and every diagnosis you make below is meaningless. Probe at the
-failing position:
+Silicon forks on `if`, on impure implications and conditionals, and inside
+`unfolding`. An obligation is reported if it fails on *any* path, so the first
+question is which one — a goal that is unprovable only on a branch you believed
+was impossible needs the branch ruled out, not the goal proved.
 
-```go
-//@ assert false     // SUCCEEDS (no error reported here) => context is inconsistent
+```bash
+gobra -i pkg/b.go@412 --printVpr
+silicon --numberOfParallelVerifiers 1 --enableBranchconditionReporting \
+        --numberOfErrorsToReport 0 pkg/b.go.chopped0.vpr
 ```
 
-The reading is inverted, which is easy to misread in a batch run. Gobra's
-`refute` statement gives the same information with the normal sign — it reports
-an error exactly when the assertion is provable or the state is unreachable:
+`--enableBranchconditionReporting` attaches the branch conditions to each error.
+`--numberOfErrorsToReport 0` lifts Silicon's default of stopping a member at its
+first failure, so you see the whole set at once instead of peeling them off one
+run at a time — worth doing before you invest in any single one.
 
-```go
-//@ refute false     // FAILS ("Assert…is either unreachable or it always holds") => inconsistent
-```
+**What this question is not.** It is tempting to probe the failing position with
+`assert false` to check the context is not inconsistent. That check is worth
+running, but never here: an inconsistent state proves *everything*, so an
+obligation that fails has already demonstrated that its own state is consistent.
+`assert false` at a failing position cannot succeed, and a "passing" vacuity
+check there means you moved the probe, not that you learned something.
 
-Usual causes, in the order they actually occur: a `requires false` stub left
-behind from `gobra-specify-verify` step 1; an `assume` that is stronger than
-intended; a loop invariant that is contradictory rather than merely wrong; an
-unfolded predicate whose body is unsatisfiable. Fix this first — a vacuous proof
-is worse than a failing one, because it is silent.
-
-Worth doing proactively at the end of any long proof, not only when debugging.
+The vacuity check belongs in the two places where it can actually fire: before
+believing a probe that **passed** (§5), and on the member once it **verifies**
+(§6). The mechanics are there.
 
 ### Q2. Is it a proof gap or a budget problem?
 
@@ -169,9 +174,12 @@ the solver for a witness, so it is a genuine refutation probe:
 ```
 
 If that verifies, Gobra proved a counterexample index exists in this context and
-your quantified goal cannot be proved because it is *wrong*. If it fails
-("Witness for assertion ... not found"), the result is inconclusive — carry on
-with §3.
+your quantified goal cannot be proved because it is *wrong* — provided the
+context is consistent, since an inconsistent one produces a "witness" for
+anything. Check that with `refute false` at the same position (§5) before
+acting on a successful refutation. If the probe fails instead ("Witness for
+assertion ... not found"), the result is inconclusive: a context that cannot
+prove `P(k)` usually cannot prove `!P(k)` either. Carry on with §3.
 
 If the false property is a postcondition of the code as written, you have found
 a bug, not a proof gap. Say so loudly and separately: that is the outcome
@@ -191,6 +199,13 @@ gobra -i pkg/a.go pkg/b.go@412
 You will spend 5–20 runs here. At package speed you will stop measuring and
 start guessing.
 
+One property of Gobra's `assert` makes this whole approach viable on resources:
+**`assert` checks without consuming.** Unlike `exhale`, it leaves the permission
+state untouched, so `assert acc(&x.f)` is a read-only measurement and can be
+inserted anywhere without disturbing the proof around it. `assume`, `inhale`,
+`exhale`, `fold` and `unfold` are *not* probes in this sense — they change the
+state, and everything downstream of them is a different program.
+
 ### 3.1 Decompose the obligation
 
 *The highest-yield action, and the one to try first on anything logical.* A
@@ -206,9 +221,30 @@ becomes
 //@ assert h == RKHashRange(seq(s), 0, i)
 ```
 
-The same applies to contract clauses, and there it is free: split one
-`requires`/`ensures`/`invariant` with `&&` into several clauses and Gobra
-reports the position of the failing one.
+The same applies to contract clauses, and there it is free and always safe:
+several `requires`/`ensures`/`invariant` clauses mean exactly their conjunction,
+so splitting one clause into several changes nothing except that Gobra now
+reports the position of the failing part.
+
+**Splitting one `assert` into several is not always meaning-preserving.**
+Between *impure* assertions — anything mentioning `acc`, a predicate instance,
+or a quantified permission — Viper's `&&` is a **separating** conjunction: the
+permissions add up. So
+
+```go
+//@ assert acc(&x.f, 1/2) && acc(&x.f, 1/2)     // needs the whole permission
+//@ assert acc(&x.f, 1/2)                       // each passes while holding only 1/2
+//@ assert acc(&x.f, 1/2)
+```
+
+are different checks, and the split turns a genuine failure into a pair of
+spurious passes — the vacuous-pass failure mode of §5, manufactured by the
+action meant to diagnose it. Decomposition is safe when the conjuncts are pure,
+and when they are impure but mention disjoint resources (`acc(s, p) && acc(sep,
+p)` for distinct slices). It is unsafe as soon as one location can be covered
+twice, which includes quantified permissions over ranges that may overlap and
+two predicate instances over the same object. When in doubt, decompose the pure
+conjuncts and leave the resource ones joined.
 
 **Split only at the top level, and only when the top-level operator is `&&`.**
 `==>` binds *weaker* than `&&`, so `A ==> B && C` is `A ==> (B && C)` and
@@ -237,9 +273,10 @@ into one.
 an `assert` at each return, **in the state the postcondition is actually checked
 in**. That qualification is the whole difficulty. `return -1` assigns the result
 parameter *as part of* the `return`, so an `assert` placed textually above it
-runs while `res` still holds its zero value. The probe then tests a claim nobody
-asked about — and for a clause shaped `res == -1 ==> …` it passes *vacuously*,
-because `res` is `0` there and the implication is trivially true. A probe that
+runs while `res` still holds whatever it held before the return — its zero
+value, unless the body assigned it earlier. The probe then tests a claim nobody
+asked about, and for a clause shaped `res == -1 ==> …` it passes *vacuously*
+whenever that stale value is not `-1`. A probe that
 reports success while testing nothing is the worst outcome available.
 
 Split the return so the assignment happens first:
@@ -327,12 +364,21 @@ meaningful rather than trivially "the assignment":
 
 | Moving up past | Restate `G` as |
 |---|---|
-| `x := e` | `G[e/x]` — substitute the initializer for the variable |
+| `x := e` with `e` **pure** | `G[e/x]` — substitute the initializer for the variable |
+| `x := foo(…)` with `foo` impure | no substitution available: assertions may not contain impure calls. Keep `G` below the call and probe the call's `ensures` instead |
 | `x.f = e`, `s[i] = e` | keep `G`; if it mentions the assigned location, snapshot instead (§3.4) |
 | `if c { … } else { … }` | copy `G` into **both** branches; a fact can die on one path only |
-| a call `foo(a)` | keep `G` before the call. If it holds there and fails after, `foo`'s `ensures` is too weak — that is the answer |
+| a call `foo(a)` | keep `G` before the call. Holding before and failing after has two causes — see below |
 | `fold P(x)` | the fields are gone; `G` must be restated as a property of `P(x)` (§3.8) |
 | a loop | `G` after the loop must follow from *invariant ∧ ¬guard*; assert it inside the body too, to see whether it ever held |
+
+A call that kills `G` is ambiguous in a way no other statement is, because
+Gobra havocs what the callee may have written. Either **the postcondition is too
+weak** to re-establish `G`, or **the caller gave away all its permission** to the
+locations `G` mentions and so cannot frame their values across the call even
+though nothing wrote them. §3.11's wildcard probe separates the two: if
+`assert acc(e, _)` fails after the call, it is framing, and the fix is
+`preserves acc(e, R)` on the callee rather than a stronger `ensures`.
 
 **Reading the flip point** — this table is the payoff of the whole skill:
 
@@ -357,6 +403,13 @@ state and compare:
 ... suspect region ...
 //@ assert l.View() == v0
 ```
+
+The snapshot only freezes anything if `v0` is a **mathematical value** — `seq`,
+`set`, `mset`, `dict`, `integer`, an ADT, a `bool`. Those are copied, so `v0`
+keeps the old contents whatever happens to the heap afterwards. Snapshotting a
+pointer, a slice, or a struct containing one saves a reference, and `v0` then
+changes along with the object: the comparison becomes a tautology and passes for
+the wrong reason. Snapshot the abstraction, never the thing it abstracts.
 
 Walk the `assert` up as in §3.3. The flip point is the statement that changed
 the abstraction — which is a *much* stronger result than a failing assertion,
@@ -417,7 +470,7 @@ in Gobra*, because it separates the two failure modes of a quantified goal that
 look identical in the output.
 
 ```go
-//@ ghost k := <a concrete or symbolic index>
+//@ ghost k := <a concrete index: 0, i, len(s)-1, whatever is in scope>
 //@ assert 0 <= k && k < n        // the antecedent
 //@ assert P(k)                   // the body at that index
 ```
@@ -428,7 +481,16 @@ look identical in the output.
 |---|---|---|
 | fails | fails | The property is missing at that index — a real gap. Carry `P(k)` into §3.3 |
 | verifies | fails | **Triggering.** The fact is in context and will not instantiate |
-| verifies for every index you try | fails | Same — and now you have evidence |
+
+A concrete index is weak evidence: it can succeed at `0` and `n-1` while the
+property genuinely fails in the middle, so "verifies at the indices I tried"
+does not establish the quantified goal. The version that does discriminate uses
+an *arbitrary* index — one constrained only by the antecedent — and Gobra has no
+statement that introduces one. That is exactly the lemma of §3.6: a ghost
+function with `k` as a parameter and the antecedent as its `requires`. If the
+body verifies there and the quantified form still fails at the call site, the
+gap is triggering or context, not the property. Use the concrete probe to form
+the hypothesis cheaply and the lemma to settle it.
 
 A trigger diagnosis sends you to `gobra-debug-perf`'s trigger section: Gobra
 does not run Viper's consistency check, so a quantifier can carry a pattern
@@ -443,9 +505,16 @@ When the goal mentions an `opaque` pure function or a predicate, the definition
 is deliberately not in context. Put it there, once, at the failing point:
 
 ```go
-//@ assert reveal MatchesAt(q, pat, j)     // opaque pure function
-//@ unfold acc(l.Mem(), R)                 // predicate
+//@ assert reveal MatchesAt(q, pat, j)            // opaque pure function
+//@ assert unfolding acc(l.Mem(), R) in l.n > 0   // predicate, non-destructively
 ```
+
+Use the **`unfolding … in` expression form**, not an `unfold` statement, when
+you are only probing. `unfold` permanently replaces the predicate instance with
+its body: everything after it is a different program, later `fold`s may stop
+matching, and you have changed the thing you were trying to measure. `unfolding`
+opens the predicate for the evaluation of one expression and leaves the state
+alone, which is what a probe should do (§3 preamble).
 
 **Reading it.** If the goal now verifies, the missing fact was the definition —
 but `reveal` at that point is usually the *wrong fix*. Revealing inside a hot
@@ -455,8 +524,8 @@ function opaque. Introduce a lemma whose `ensures` states the consequence you
 need, so the unfolding happens in the lemma's small context and the caller
 receives only the conclusion.
 
-For predicates, use the expression form `unfolding P(x) in e` in specifications
-where a `unfold` statement is not available, and keep the unfolded region short.
+When the fix does need a real `unfold`, keep the unfolded region short: an
+unfolded predicate costs the same as no predicate (`gobra-improve-perf` §2).
 
 ### 3.9 Case-split
 
@@ -583,7 +652,8 @@ missing fact — delete it in the same session.
 
 Chain the actions; do not shop among them. The procedure terminates.
 
-1. **Triage** (§2). Reachable? Not a timeout? Property actually true?
+1. **Triage** (§2). Which path does it fail on? Not a timeout? Property
+   actually true?
 2. **Materialize** (§3.2) until the failure is on an `assert` statement.
 3. **Decompose** (§3.1) until the failing goal is a single conjunct that no
    longer splits.
@@ -606,12 +676,29 @@ to step 4 with the *precondition* as the goal, or to §2 Q3.
   established until the member verifies with the probes removed.
 - **Put the probe where the state is, not where the statement is.** An `assert`
   reads the state at the point it sits, and that is not always the point the
-  obligation is checked: at `return e` the result parameter still holds its zero
-  value, at the end of a 3-clause `for` body the post statement has not run yet,
+  obligation is checked: at `return e` the result parameter still holds its
+  pre-return value, at the end of a 3-clause `for` body the post statement has not run yet,
   and after a `fold` the fields are inside the predicate. A probe in the wrong
   state usually *passes* — vacuously — and a vacuous pass reads exactly like a
   real one. Before believing a probe that succeeded, check that it could have
   failed: negate it, or place it somewhere you know it must fail.
+- **A probe that passed may be sitting in an inconsistent context**, where
+  everything is provable. This is the one place the vacuity check fires, since a
+  *failing* obligation already proves its own state consistent (§2 Q1). At the
+  probe's position:
+
+  ```go
+  //@ assert false      // SUCCEEDS (nothing reported) => context is inconsistent
+  //@ refute false      // FAILS ("...unreachable or it always holds") => same, normal sign
+  ```
+
+  `refute` is the better form in a batch run: it reports an error in the bad
+  case instead of asking you to notice a missing one. Usual causes, in the order
+  they occur: a `requires false` stub left from `gobra-specify-verify` step 1; an
+  `assume` stronger than intended; a contradictory (not merely wrong) loop
+  invariant; an unfolded predicate whose body is unsatisfiable. The refutation
+  probe of §2 Q3 needs this check for the same reason — in an inconsistent
+  context it "finds" a witness for anything.
 - **An error that "disappears" may have moved.** Silicon stops a member at its
   first failing obligation, so a probe inserted before the real failure can hide
   it. Check that the member now *verifies*, not merely that the message changed.
@@ -627,8 +714,10 @@ to step 4 with the *precondition* as the goal, or to §2 Q3.
   work to callers, which may be in other packages.
 - **`assume` left behind is a silent unsoundness.** If one has to survive, it
   goes in `assumptions.gobra`, named and justified (`gobra-review-code` §8).
-- **A member that verifies is not necessarily proving anything.** Re-run §2 Q1
-  when you are done, especially if you added a `requires` along the way.
+- **A member that verifies is not necessarily proving anything.** A vacuous
+  proof is worse than a failing one, because it is silent. Put `refute false` at
+  the end of the body — and inside each branch that matters — once the member is
+  green, especially if you strengthened a `requires` along the way.
 
 ## 6. Clean up before reporting
 
@@ -638,11 +727,16 @@ Probes come out. Concretely, before you call this done:
    split-out clause that existed only to localize.
 2. Re-verify the member, then the package (`gobra -p ./pkg`). Probes suppress
    later errors; the package run is what tells you the fix is real.
-3. Keep only what earns its place: an assertion that is *load-bearing* (removing
+3. **Check the proof is not vacuous.** A member that verifies because its
+   context is inconsistent verifies silently. Put `refute false` at the end of
+   the body and inside any branch you care about, confirm each one is *not*
+   reported, and take them out again. Do this whenever you strengthened a
+   `requires`, added an `assume`, or changed an invariant while debugging.
+4. Keep only what earns its place: an assertion that is *load-bearing* (removing
    it breaks the proof), a lemma extracted in §3.6, a bridge assertion from
    §3.10, or a snapshot that the invariant now needs. Test each one by deleting
    it and re-running.
-4. Run `gofmt -l` over any `.go` file you touched, and put new ghost members in
+5. Run `gofmt -l` over any `.go` file you touched, and put new ghost members in
    the right file — `spec.gobra`, `lemmas.gobra`, `assumptions.gobra`
    (`gobra-review-code` §8).
 

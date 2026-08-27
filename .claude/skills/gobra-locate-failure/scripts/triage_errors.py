@@ -106,7 +106,7 @@ REASONS = [
 # resource problem whatever obligation it was reported on.
 BY_REASON = {
     "permission":       ("3.11", "Resource failure, not a missing fact. Probe `assert acc(e, _)` first, then walk it up."),
-    "refutation_true":  ("2 Q1", "A `refute` fired: this state is unreachable or the assertion always holds. Check for a vacuous context."),
+    "refutation_true":  ("5",    "A `refute` fired: this state is unreachable or the assertion always holds. Expected if you placed it as a vacuity probe; otherwise the context is inconsistent."),
     "seq_index_high":   ("3.10", "Well-definedness. Assert the index bounds before the property."),
     "seq_index_neg":    ("3.10", "Well-definedness. Assert the index bounds before the property."),
     "map_key":          ("3.10", "Well-definedness. Assert key containment before the property."),

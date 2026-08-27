@@ -287,7 +287,8 @@ def main():
 
     print("\nSilicon stops each member at its FIRST failing obligation, so this list is a "
           "lower bound: fixing one error routinely reveals more. That is not a regression.")
-    print("Before acting on any of it, run the §2 triage: reachable state, not a timeout, "
+    print("Before acting on any of it, run the §2 triage: which path it fails on, not a "
+          "timeout, backend at defaults (no exhaleMode(0)/moreJoins(all)/parallelizeBranches), "
           "property actually true.")
 
 

@@ -111,9 +111,17 @@ Two facts about the error *list* that mislead people constantly:
 - **A reason mentioning permission is never a missing-fact problem.** Do not
   reach for lemmas and asserts; go to §3.11.
 
-## 2. Triage: three questions, before any probing
+One shortcut is worth trying before any probing when the goal is over concrete
+data: ask the solver for a counterexample. Dump the isolated member
+(`gobra -i pkg/b.go@412 --printVpr`) and run Silicon with
+`--counterexample mapped` on the chopped `.vpr`; failing obligations then come
+back with a partial model. The model is heuristic, incomplete, and phrased in
+encoded Viper names, so read it as a hint about *which values* break the goal —
+often enough to skip the first probes of §3 — never as ground truth.
 
-Every action below assumes the failure is a genuine proof gap. Three cheap
+## 2. Triage: four questions, before any probing
+
+Every action below assumes the failure is a genuine proof gap. Four cheap
 checks decide whether it is. Answer them in this order; each is one run.
 
 ### Q1. Is the failure on a path that can actually happen?
@@ -184,6 +192,23 @@ prove `P(k)` usually cannot prove `!P(k)` either. Carry on with §3.
 If the false property is a postcondition of the code as written, you have found
 a bug, not a proof gap. Say so loudly and separately: that is the outcome
 `gobra-specify-verify` cares about most.
+
+### Q4. Is the verifier being incomplete, not the proof wrong?
+
+Some configurations trade completeness for speed, and `gobra-improve-perf`
+plants them per member, so a failure can be an artifact of an optimization:
+
+- `#backend[exhaleMode(0)]` — the greedy heap algorithm is incomplete under
+  disjunctive aliasing, and then reports `Permission to ... might not suffice`
+  on members that verify under the default `exhaleMode(1)`.
+- `#backend[moreJoins(all)]` has produced spurious errors in practice.
+- `--parallelizeBranches` makes results unstable: an error that appears and
+  disappears between identical runs is instability, not logic.
+
+Check the member's `#backend[...]` annotation and the CLI flags, and re-verify
+the isolated member with the backend at defaults. If the error vanishes,
+nothing in §3 applies — the optimization is too incomplete for this member;
+revert it and record that in the `gobra-improve-perf` ledger.
 
 ## 3. The action catalogue
 
@@ -356,7 +381,24 @@ cause.
 
 Copy `assert G` to a position earlier in the body and re-run. Binary search
 rather than stepping: on a 60-line body, midpoint-first finds the flip point in
-six runs instead of thirty.
+six runs instead of thirty. Two things make a walk read wrong if ignored.
+
+**Bisect only what the region does not write.** Binary search assumes the raw
+fact is meaningful at every position, and that is false exactly when the region
+updates what `G` mentions. A loop-invariant clause like
+`h == RKHashRange(seq(s), i-n, i)` is *deliberately* false between
+`h *= PrimeRK` and the lemma call that restores it — interior probes fail for
+boring reasons, and bisect crowns the first update statement "the cause".
+When statements in the region assign to `G`'s variables or footprint, step
+linearly from the failure upward, transporting `G` through each statement per
+the table below. Keep bisect for facts the region is not supposed to touch:
+context facts, permissions, snapshots (§3.4).
+
+**Read the probe's reason line (§1), not only pass/fail.** A heap-dependent
+`G` can fail with `Permission to ... might not suffice` at a position where
+the fact is intact but the permission to *evaluate* it is folded away or
+already given up. That failure localizes the permission (§3.11) at the probe's
+position — not the fact.
 
 Restate `G` when you move it past a statement that assigns something it mentions
 — this is the weakest-precondition part, and it is what makes the answer
@@ -434,6 +476,12 @@ implication's shape, not the goal: something in the surrounding context could
 not see `A`. If `B` still fails, you have a strictly smaller goal — carry `B`
 into §3.3 with `A` as a known hypothesis.
 
+The probe is not free downstream. Silicon does not join branches after an `if`
+— that is what `moreJoins` exists to change — so the ghost branch forks every
+path below it: later obligations are verified once per branch, the budget
+shifts, and the first-reported error can move. Read only the branch's own
+result, and take the probe out before probing anything later in the member.
+
 ### 3.6 Introduce the bound variable
 
 Verus offers `assert forall |i| … implies … by { … }`, which puts the bound
@@ -457,7 +505,11 @@ proof runs in a *small* context — which alone fixes a surprising share of
 failures, because the ambient context was the problem (see `gobra-improve-perf`
 §2). Induction over the bound is then available via `decreases` and a recursive
 call, which is the only way to prove most quantified facts about recursive spec
-functions.
+functions. The move is free only when the goal ranges over mathematical values
+— pass `seq(s)`, not `s`. A goal about the heap itself (pointer identities like
+the reslice bridge of §3.10, permissions) can only move into a lemma that
+borrows the resources — `preserves acc(s, R)`-style clauses — or must stay
+inline.
 
 The cheaper, non-inductive variant: a ghost `for` loop whose invariant is the
 quantified goal with `k` in place of the bound, building the fact one index at a
@@ -480,11 +532,15 @@ look identical in the output.
 | Instance | Quantified goal | Diagnosis |
 |---|---|---|
 | fails | fails | The property is missing at that index — a real gap. Carry `P(k)` into §3.3 |
-| verifies | fails | **Triggering.** The fact is in context and will not instantiate |
+| verifies | fails | **Triggering — or induction** (below): the fact will not instantiate, or the instance was cheap and the general goal is not |
 
 A concrete index is weak evidence: it can succeed at `0` and `n-1` while the
 property genuinely fails in the middle, so "verifies at the indices I tried"
-does not establish the quantified goal. The version that does discriminate uses
+does not establish the quantified goal. Worse, when the body is a recursive
+spec function (`MatchesAtRange`, `RKHashRange`), a small concrete instance is
+provable by just unrolling the definition, so success at `k := 0` is expected
+even when the general goal needs induction — no trigger anywhere at fault. The
+version that does discriminate uses
 an *arbitrary* index — one constrained only by the antecedent — and Gobra has no
 statement that introduces one. That is exactly the lemma of §3.6: a ghost
 function with `k` as a parameter and the antecedent as its `requires`. If the
@@ -593,7 +649,9 @@ The flip point is almost always one of four things:
 
 A `Fold might fail` is the same problem stated at the predicate: decompose the
 predicate body (§3.1) into one `assert` per conjunct just before the `fold`, and
-the missing chunk names itself.
+the missing chunk names itself. A fold can also fail on a *pure* conjunct of
+the body — the reason line says which kind you have — and the split is safe as
+long as no two resource conjuncts can cover the same location (§3.1).
 
 ### 3.12 Scope the region
 
@@ -636,11 +694,29 @@ if reveal MatchesAt(q, pat, j) {
 
 ### 3.13 Weaken the contract (diagnostic only)
 
-For a failing `ensures A ==> B`, move `A` into `requires` and leave `ensures B`.
-If `B` then verifies, the difficulty is in establishing `A` at the return, not
-in `B`. **This is a probe, not a fix** — it moves the obligation onto every
-caller. Revert it unless the stronger precondition is genuinely what the API
-means, in which case it is a spec change and belongs in the report as one.
+For a failing `ensures A ==> B`, move `A` into `requires` and leave `ensures B`
+— when the move is expressible at all. `A` must not mention named results (they
+are not in scope in `requires`), and if `A` reads heap the body modifies, the
+moved `A` is a *different assertion*: `requires` evaluates it in the pre-state,
+`ensures` in the post-state. So the probe is meaningful only for `A` over
+parameters and unmodified state. The antecedents this repo actually hits —
+`res == -1 ==> …` — are result-shaped; probe those with §3.2 + §3.5 instead
+(materialize at the return, then `ghost if res == -1 { assert … }`).
+
+Reading it needs care, because the rewrite changes the obligation in two
+directions at once: `B` must now hold on *every* path (paths where `A` was
+false used to get it for free), and `A` is known from *entry* — available to
+the whole body, loop invariants included — where the original only assumed it
+at the return, on paths where it held. If the modified contract verifies, `B`
+was never the problem: the gap is that nothing carried `A`, or what follows
+from it, along the failing path to the return. The fix is usually an invariant
+clause or a case split at the return, not a lemma about `B`. If `B` still
+fails, you have a smaller goal under a stronger hypothesis — carry it into
+§3.3.
+
+**This is a probe, not a fix** — it moves the obligation onto every caller.
+Revert it unless the stronger precondition is genuinely what the API means, in
+which case it is a spec change and belongs in the report as one.
 
 The same caution covers every "make it verify by weakening" move: deleting a
 postcondition, adding `trusted`, or inserting `assume`. Those are holes in the
@@ -652,8 +728,8 @@ missing fact — delete it in the same session.
 
 Chain the actions; do not shop among them. The procedure terminates.
 
-1. **Triage** (§2). Which path does it fail on? Not a timeout? Property
-   actually true?
+1. **Triage** (§2). Which path does it fail on? Not a timeout? Backend at
+   defaults? Property actually true?
 2. **Materialize** (§3.2) until the failure is on an `assert` statement.
 3. **Decompose** (§3.1) until the failing goal is a single conjunct that no
    longer splits.
@@ -743,7 +819,8 @@ Probes come out. Concretely, before you call this done:
 ## 7. Report
 
 - **The failing obligation**: `file:line`, error and reason quoted verbatim.
-- **Triage verdict**: proof gap / timeout / vacuous context / bug in the code.
+- **Triage verdict**: proof gap / timeout / incomplete backend mode / vacuous
+  context / bug in the code.
   If it is the last one, that is the headline, not a footnote.
 - **The minimal failing goal** after decomposition.
 - **The flip point**: `file:line` and the statement, plus the one-sentence

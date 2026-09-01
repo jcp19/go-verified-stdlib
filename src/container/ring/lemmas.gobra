@@ -1,0 +1,48 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// Ghost lemmas of package container/ring.
+
+package ring
+
+// WrapShift states that a full turn around the ring is the identity on ring
+// positions.
+ghost
+requires 0 < m
+ensures  Wrap(k+m, m) == Wrap(k, m)
+decreases
+func WrapShift(k int, m int) {
+}
+
+// StepIsWrap bridges the two descriptions of a walk around the ring: Step,
+// which counts the single steps Move actually takes, and Wrap, the "% Len()"
+// of Move's doc comment.
+ghost
+requires 0 < m && 0 <= i && i < m
+ensures  Step(i, n, m) == Wrap(i+n, m)
+decreases n < 0 ? -n : n
+func StepIsWrap(i int, n int, m int) {
+	if n == 0 {
+		assert Wrap(i, m) == i
+	} else if n > 0 {
+		ghost i2 := i+1 == m ? 0 : i+1
+		StepIsWrap(i2, n-1, m)
+		assert Step(i, n, m) == Step(i2, n-1, m)
+		if i+1 == m {
+			WrapShift(n-1, m)
+			assert i+n == (n-1)+m
+		}
+	} else {
+		ghost i2 := i == 0 ? m-1 : i-1
+		StepIsWrap(i2, n+1, m)
+		assert Step(i, n, m) == Step(i2, n+1, m)
+		if i == 0 {
+			WrapShift(n, m)
+			assert i2+n+1 == n+m
+		}
+	}
+}

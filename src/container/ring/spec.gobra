@@ -1,0 +1,131 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// This file holds the Gobra specification of package container/ring:
+// the memory predicate, the ghost functions the contracts are written in
+// terms of, and the closure specification used by Do.
+//
+// A ring is a circular doubly-linked list without a header: every element is
+// an equally good handle on the whole ring. The abstraction is therefore not
+// carried in ghost fields of a distinguished node (as in container/list) but
+// passed explicitly:
+//
+//	Mem(rs, vs)  owns the elements rs of one ring, in forward order, and
+//	             states that vs are the values they store (vs[i] is the value
+//	             of rs[i]).
+//
+// Every method requires rs[0] == r, i.e. the sequence is rotated so that it
+// starts at the receiver. Rotate (lemmas.gobra) turns Mem(rs, vs) into the
+// same ring seen from another of its elements, which is what a client needs
+// after Next, Move or Link hand it a pointer to a different element.
+
+package ring
+
+// Mem(rs, vs) owns one ring: the elements rs, in forward order, storing the
+// values vs.
+//
+// The zero value of Ring is documented as "a one-element ring with a nil
+// Value", so a single element whose next and prev are still nil is a ring of
+// length one here. Every exported method initializes such an element on its
+// first use (the r.next == nil branches in ring.go), which is why the
+// contracts below can promise IsInit on the way out but must not demand it on
+// the way in.
+pred Mem(rs seq[*Ring], vs seq[any]) {
+	0 < len(rs) &&
+	len(rs) == len(vs) &&
+	// ownership of every element, and the value it stores
+	(forall i int :: {rs[i]} 0 <= i && i < len(rs) ==>
+		acc(rs[i]) && rs[i] != nil && rs[i].Value === vs[i]) &&
+	// The elements are pairwise distinct and consecutive ones are linked.
+	// Both facts are phrased in a single two-variable quantifier whose body
+	// introduces no new sequence-index terms; see VERIFICATION.md.
+	(forall i, k int :: {rs[i], rs[k]} 0 <= i && i < len(rs) && 0 <= k && k < len(rs) ==>
+		(rs[i] == rs[k] ==> i == k) &&
+		(k == i+1 ==> rs[i].next == rs[k] && rs[k].prev == rs[i])) &&
+	// A ring that has not been initialized yet is a single element linked to
+	// nothing; any other ring is closed. For len(rs) > 1 the quantifier above
+	// already forces rs[0].next == rs[1] != nil, so only a one-element ring
+	// can take the first branch.
+	(rs[0].next == nil ==> len(rs) == 1 && rs[0].prev == nil) &&
+	(rs[0].next != nil ==> rs[len(rs)-1].next == rs[0] && rs[0].prev == rs[len(rs)-1])
+}
+
+// IsInit reports whether the ring rs has been linked up, i.e. whether it is
+// anything other than a single element still holding the zero value's nil
+// next and prev. It is an implementation detail rather than part of the
+// abstraction -- every exported operation behaves the same either way -- but
+// the package's own tests read r.next and r.prev directly, so it has to be
+// observable.
+ghost
+requires acc(Mem(rs, vs), _)
+decreases
+pure func IsInit(rs seq[*Ring], vs seq[any]) bool {
+	return unfolding acc(Mem(rs, vs), _) in rs[0].next != nil
+}
+
+// Wrap normalizes the position k of a ring of m elements to [0, m). It is the
+// "% r.Len()" of the doc comments of Move and Unlink.
+ghost
+requires 0 < m
+ensures  0 <= res && res < m
+decreases
+pure func Wrap(k int, m int) (res int) {
+	return ((k % m) + m) % m
+}
+
+// Step is Wrap phrased as n single steps around a ring of m elements, which is
+// how Move actually walks. Move's loop invariant is stated with Step and
+// StepIsWrap (lemmas.gobra) bridges it to the closed form used in the contract.
+ghost
+requires 0 < m && 0 <= i && i < m
+ensures  0 <= res && res < m
+decreases n < 0 ? -n : n
+pure func Step(i int, n int, m int) (res int) {
+	return n == 0 ? i :
+		(n > 0 ? Step(i+1 == m ? 0 : i+1, n-1, m) :
+			Step(i == 0 ? m-1 : i-1, n+1, m))
+}
+
+// Rot rotates rs so that position k comes first. It describes the same ring
+// seen from another of its elements.
+ghost
+requires 0 <= k && k <= len(rs)
+ensures  len(res) == len(rs)
+decreases
+pure func Rot(rs seq[*Ring], k int) (res seq[*Ring]) {
+	return rs[k:] ++ rs[:k]
+}
+
+// RotV is Rot for the value sequence.
+ghost
+requires 0 <= k && k <= len(vs)
+ensures  len(res) == len(vs)
+decreases
+pure func RotV(vs seq[any], k int) (res seq[any]) {
+	return vs[k:] ++ vs[:k]
+}
+
+// Visitor is the ghost counterpart of the function a client passes to Do.
+// Seen(calls) is the client's invariant after f has been applied to exactly
+// the values calls, in that order; Accepts(v) is the client's precondition on
+// a single value, which lets partial functions -- such as the summing closure
+// of ring_test.go, which asserts p.(int) -- be passed to Do.
+type Visitor interface {
+	pred Seen(ghost calls seq[any])
+
+	ghost
+	decreases
+	pure Accepts(v any) bool
+}
+
+// VisitSpec is the closure specification of the function passed to Do: one
+// call extends the sequence of values already seen by the value it is given.
+ghost
+requires vis != nil && vis.Seen(prev) && vis.Accepts(v)
+ensures  vis.Seen(prev ++ seq[any]{v})
+decreases
+func VisitSpec(ghost vis Visitor, ghost prev seq[any], v any)

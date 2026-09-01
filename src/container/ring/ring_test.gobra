@@ -298,3 +298,18 @@ func TestMoveEmptyRing() {
 	assert SumOf(vs) == 0
 	verify(&r, 1, 0, rs, vs)
 }
+
+// testMoveIsNotDegenerate is not in the original test file. It pins down that
+// Move's postcondition really names the element Move walks to: the original's
+// only check on Move is that Move(n) and Move(n % Len()) agree, which a
+// contract saying "Move returns the receiver" would satisfy just as well.
+decreases
+func testMoveIsNotDegenerate() {
+	qs, qvs, q := makeN(3)
+	x := q.Move(1, qs, qvs, 0)
+	assert x == qs[1]
+	y := q.Move(2, qs, qvs, 0)
+	assert y == qs[2]
+	z := q.Move(-1, qs, qvs, 0)
+	assert z == qs[2]
+}

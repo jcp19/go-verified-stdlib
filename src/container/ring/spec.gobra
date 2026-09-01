@@ -66,10 +66,10 @@ pred Mem(rs seq[*Ring], vs seq[any]) {
 // the package's own tests read r.next and r.prev directly, so it has to be
 // observable.
 ghost
-requires acc(Mem(rs, vs), _)
+requires Mem(rs, vs)
 decreases
 pure func IsInit(rs seq[*Ring], vs seq[any]) bool {
-	return unfolding acc(Mem(rs, vs), _) in rs[0].next != nil
+	return unfolding Mem(rs, vs) in rs[0].next != nil
 }
 
 // Wrap normalizes the position k of a ring of m elements to [0, m). It is the

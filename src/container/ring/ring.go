@@ -20,9 +20,9 @@ type Ring struct {
 
 // init links r to itself. It is the lazy initialization of the zero Ring
 // value, which the doc comment of Ring declares to be a one-element ring.
-// @ requires acc(r)
-// @ ensures  acc(r) && ret == r
-// @ ensures  r.next == r && r.prev == r
+// @ preserves acc(r)
+// @ ensures   ret == r
+// @ ensures   r.next == r && r.prev == r
 // @ ensures  r.Value === old(r.Value)
 // @ decreases
 func (r *Ring) init() (ret *Ring) {
@@ -32,9 +32,9 @@ func (r *Ring) init() (ret *Ring) {
 }
 
 // Next returns the next ring element. r must not be empty.
-// @ requires  Mem(rs, vs)
+// @ preserves Mem(rs, vs)
 // @ requires  0 <= i && i < len(rs) && rs[i] == r
-// @ ensures   Mem(rs, vs) && IsInit(rs, vs)
+// @ ensures   IsInit(rs, vs)
 // @ ensures   ret == rs[i+1 < len(rs) ? i+1 : 0]
 // @ decreases
 func (r *Ring) Next( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (ret *Ring) {
@@ -57,9 +57,9 @@ func (r *Ring) Next( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/
 }
 
 // Prev returns the previous ring element. r must not be empty.
-// @ requires  Mem(rs, vs)
+// @ preserves Mem(rs, vs)
 // @ requires  0 <= i && i < len(rs) && rs[i] == r
-// @ ensures   Mem(rs, vs) && IsInit(rs, vs)
+// @ ensures   IsInit(rs, vs)
 // @ ensures   ret == rs[i > 0 ? i-1 : len(rs)-1]
 // @ decreases
 func (r *Ring) Prev( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (ret *Ring) {
@@ -82,10 +82,10 @@ func (r *Ring) Prev( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/
 // Move moves n % r.Len() elements backward (n < 0) or forward (n >= 0)
 // in the ring and returns that ring element. r must not be empty.
 //
-// @ requires  Mem(rs, vs)
+// @ preserves Mem(rs, vs)
 // @ requires  0 <= i && i < len(rs) && rs[i] == r
-// @ ensures   Mem(rs, vs) && IsInit(rs, vs)
-// @ ensures   ret == rs[Wrap(i+old(n), len(rs))]
+// @ ensures   IsInit(rs, vs)
+// @ ensures   ret == rs[Wrap(i+n, len(rs))]
 // @ decreases
 func (r *Ring) Move(n int /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/) (ret *Ring) {
 	//@ ghost m := len(rs)
@@ -243,10 +243,10 @@ func (r *Ring) Unlink(n int) *Ring {
 // Len computes the number of elements in ring r.
 // It executes in time proportional to the number of elements.
 //
-// @ requires  r != nil ==> Mem(rs, vs)
+// @ preserves r != nil ==> Mem(rs, vs)
 // @ requires  r != nil ==> 0 <= i && i < len(rs) && rs[i] == r
 // @ requires  r == nil ==> len(rs) == 0
-// @ ensures   r != nil ==> Mem(rs, vs) && IsInit(rs, vs)
+// @ ensures   r != nil ==> IsInit(rs, vs)
 // @ ensures   r != nil ==> len(vs) == len(rs)
 // @ ensures   res == len(rs)
 // @ decreases
@@ -286,12 +286,13 @@ func (r *Ring) Len( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ 
 // applied to at all. Do reports the values in the order it visits them, so
 // unlike the other methods it needs the sequence to start at the receiver:
 // rs[0] == r.
-// @ requires  r != nil ==> Mem(rs, vs) && 0 < len(rs) && rs[0] == r
+// @ preserves r != nil ==> Mem(rs, vs)
+// @ requires  r != nil ==> 0 < len(rs) && rs[0] == r
 // @ requires  r == nil ==> len(rs) == 0 && len(vs) == 0
 // @ requires  vis != nil && vis.Seen(seq[any]{})
 // @ requires  f implements VisitSpec{vis}
 // @ requires  forall t int :: {vs[t]} 0 <= t && t < len(vs) ==> vis.Accepts(vs[t])
-// @ ensures   r != nil ==> Mem(rs, vs) && IsInit(rs, vs)
+// @ ensures   r != nil ==> IsInit(rs, vs)
 // @ ensures   vis.Seen(vs)
 // @ decreases
 func (r *Ring) Do(f func( /*@ ghost seq[any], @*/ any) /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost vis Visitor @*/) {

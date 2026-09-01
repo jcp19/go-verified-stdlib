@@ -158,9 +158,15 @@ allow a call inside an assertion.
 The six tests that call `Link` or `Unlink` are not translated: those members
 carry `requires false`, so no client can call them.
 
+One test is *added*, `testMoveIsNotDegenerate`. The original checks Move only
+by comparing `Move(n)` with `Move(n % Len())`, which a contract saying "Move
+returns the receiver" would satisfy just as well; the added test pins the
+returned element down on a three-element ring.
+
 Every member of the package and every test function was checked for vacuity by
 placing `assert false` in its body and confirming that Gobra reports an error —
-7 for the package, 6 for the tests.
+7 for the package, 6 for the tests. There is no `assume` anywhere in the
+package, and the only `trusted` members are the two stubs.
 
 ## Running the verification
 

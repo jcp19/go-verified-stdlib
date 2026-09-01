@@ -18,10 +18,15 @@
 //	             states that vs are the values they store (vs[i] is the value
 //	             of rs[i]).
 //
-// Every method requires rs[0] == r, i.e. the sequence is rotated so that it
-// starts at the receiver. Rotate (lemmas.gobra) turns Mem(rs, vs) into the
-// same ring seen from another of its elements, which is what a client needs
-// after Next, Move or Link hand it a pointer to a different element.
+// Because the abstraction is a parameter rather than a ghost field, Mem(rs,
+// vs) is one resource shared by every handle on the ring, and a method says
+// which handle it was called on with a ghost index i satisfying rs[i] == r.
+// Two pointers into the same ring -- as in the package's own TestUnlink --
+// therefore need no lemma to move the abstraction between them, and a method
+// that leaves the ring alone needs no "nothing changed" postcondition, since
+// rs and vs are pinned in the predicate's own arguments. Do is the one
+// exception: it reports the values in the order it visits them, so it asks for
+// rs[0] == r.
 
 package ring
 
@@ -88,25 +93,6 @@ pure func Step(i int, n int, m int) (res int) {
 	return n == 0 ? i :
 		(n > 0 ? Step(i+1 == m ? 0 : i+1, n-1, m) :
 			Step(i == 0 ? m-1 : i-1, n+1, m))
-}
-
-// Rot rotates rs so that position k comes first. It describes the same ring
-// seen from another of its elements.
-ghost
-requires 0 <= k && k <= len(rs)
-ensures  len(res) == len(rs)
-decreases
-pure func Rot(rs seq[*Ring], k int) (res seq[*Ring]) {
-	return rs[k:] ++ rs[:k]
-}
-
-// RotV is Rot for the value sequence.
-ghost
-requires 0 <= k && k <= len(vs)
-ensures  len(res) == len(vs)
-decreases
-pure func RotV(vs seq[any], k int) (res seq[any]) {
-	return vs[k:] ++ vs[:k]
 }
 
 // Visitor is the ghost counterpart of the function a client passes to Do.

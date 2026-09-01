@@ -35,3 +35,11 @@ jobs:
         with:
           configFile: 'src/container/list'
           timeout: 1h
+
+      # container/ring is verified except for Link and Unlink, which carry
+      # "requires false"; see src/container/ring/gobra-status.md.
+      - name: Verify package container/ring
+        uses: viperproject/gobra-action@main
+        with:
+          configFile: 'src/container/ring'
+          timeout: 1h

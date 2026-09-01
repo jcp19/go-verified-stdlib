@@ -144,7 +144,7 @@ func (r *Ring) Move(n int /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost i i
 
 // New creates a ring of n elements.
 // @ ensures   n <= 0 ==> ret == nil && len(rs) == 0 && len(vs) == 0
-// @ ensures   n > 0 ==> ret != nil && Mem(rs, vs) && len(rs) == n && rs[0] == ret
+// @ ensures   n > 0 ==> ret != nil && Mem(rs, vs) && len(rs) == n && len(vs) == n && rs[0] == ret
 // @ ensures   n > 0 ==> IsInit(rs, vs)
 // @ ensures   n > 0 ==> (forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> vs[k] == nil)
 // @ decreases
@@ -203,6 +203,12 @@ func New(n int) ( /*@ ghost rs seq[*Ring], ghost vs seq[any], @*/ ret *Ring) {
 // after r. The result points to the element following the
 // last element of s after insertion.
 //
+// NOTE: Link is not verified. Its contract is stubbed out with
+// "requires false", so no client can call it and nothing in this package rests
+// on an unproved assumption. gobra-status.md and VERIFICATION.md record the
+// measurements behind that: the merge of two rings verifies, but the same-ring
+// case has to split one quantified-permission footprint into two, which this
+// encoding of Mem does not make tractable.
 // @ trusted
 // @ requires false
 func (r *Ring) Link(s *Ring) *Ring {
@@ -223,6 +229,8 @@ func (r *Ring) Link(s *Ring) *Ring {
 // at r.Next(). If n % r.Len() == 0, r remains unchanged.
 // The result is the removed subring. r must not be empty.
 //
+// NOTE: Unlink is not verified either: it is defined in terms of Link, which
+// is not. See the note on Link.
 // @ trusted
 // @ requires false
 func (r *Ring) Unlink(n int) *Ring {
@@ -239,6 +247,7 @@ func (r *Ring) Unlink(n int) *Ring {
 // @ requires  r != nil ==> 0 <= i && i < len(rs) && rs[i] == r
 // @ requires  r == nil ==> len(rs) == 0
 // @ ensures   r != nil ==> Mem(rs, vs) && IsInit(rs, vs)
+// @ ensures   r != nil ==> len(vs) == len(rs)
 // @ ensures   res == len(rs)
 // @ decreases
 func (r *Ring) Len( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (res int) {
@@ -271,13 +280,54 @@ func (r *Ring) Len( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ 
 
 // Do calls function f on each element of the ring, in forward order.
 // The behavior of Do is undefined if f changes *r.
-// @ trusted
-// @ requires false
-func (r *Ring) Do(f func(any)) {
+// The ghost argument vis is the client's side of the closure specification in
+// spec.gobra: vis.Seen(calls) is its invariant after f has been applied to
+// exactly the values calls, and vis.Accepts says which values its f can be
+// applied to at all. Do reports the values in the order it visits them, so
+// unlike the other methods it needs the sequence to start at the receiver:
+// rs[0] == r.
+// @ requires  r != nil ==> Mem(rs, vs) && 0 < len(rs) && rs[0] == r
+// @ requires  r == nil ==> len(rs) == 0 && len(vs) == 0
+// @ requires  vis != nil && vis.Seen(seq[any]{})
+// @ requires  f implements VisitSpec{vis}
+// @ requires  forall t int :: {vs[t]} 0 <= t && t < len(vs) ==> vis.Accepts(vs[t])
+// @ ensures   r != nil ==> Mem(rs, vs) && IsInit(rs, vs)
+// @ ensures   vis.Seen(vs)
+// @ decreases
+func (r *Ring) Do(f func( /*@ ghost seq[any], @*/ any) /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost vis Visitor @*/) {
 	if r != nil {
-		f(r.Value)
-		for p := r.Next(); p != r; p = p.next {
-			f(p.Value)
+		//@ ghost m := len(rs)
+		//@ ghost c := 1
+		//@ ghost seen := seq[any]{}
+		//@ unfold Mem(rs, vs)
+		//@ assert r.Value === vs[0]
+		//@ fold Mem(rs, vs)
+		f( /*@ seen, @*/ /*@ unfolding Mem(rs, vs) in @*/ r.Value) /*@ as VisitSpec{vis} @*/
+		//@ seen = seen ++ seq[any]{vs[0]}
+		//@ invariant Mem(rs, vs)
+		//@ invariant IsInit(rs, vs)
+		//@ invariant 1 <= c && c <= m
+		//@ invariant p == rs[c < m ? c : 0]
+		//@ invariant len(seen) == c && vis.Seen(seen)
+		//@ invariant forall t int :: {seen[t]} 0 <= t && t < c ==> seen[t] === vs[t]
+		//@ decreases m - c
+		for p := r.Next( /*@ rs, vs, 0 @*/ ); p != r; p = /*@ unfolding Mem(rs, vs) in @*/ p.next {
+			//@ assert c < m
+			//@ unfold Mem(rs, vs)
+			//@ assert p.Value === vs[c]
+			//@ assert c < m-1 ==> rs[c].next == rs[c+1]
+			//@ assert c == m-1 ==> rs[c].next == rs[0]
+			//@ fold Mem(rs, vs)
+			//@ assert (unfolding Mem(rs, vs) in p.next) == rs[c+1 < m ? c+1 : 0]
+			f( /*@ seen, @*/ /*@ unfolding Mem(rs, vs) in @*/ p.Value) /*@ as VisitSpec{vis} @*/
+			//@ seen = seen ++ seq[any]{vs[c]}
+			//@ c = c + 1
 		}
+		//@ unfold Mem(rs, vs)
+		//@ assert rs[c < m ? c : 0] == rs[0]
+		//@ fold Mem(rs, vs)
+		//@ assert c == m
+		//@ assert seen == vs
 	}
+
 }

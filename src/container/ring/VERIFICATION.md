@@ -26,9 +26,9 @@ the values they store. A method says which element it was called on with a
 ghost index `i` satisfying `rs[i] == r`:
 
 ```go
-// @ requires  Mem(rs, vs)
+// @ preserves Mem(rs, vs)
 // @ requires  0 <= i && i < len(rs) && rs[i] == r
-// @ ensures   Mem(rs, vs) && IsInit(rs, vs)
+// @ ensures   IsInit(rs, vs)
 // @ ensures   ret == rs[i > 0 ? i-1 : len(rs)-1]
 func (r *Ring) Prev( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (ret *Ring)
 ```

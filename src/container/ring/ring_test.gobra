@@ -27,51 +27,51 @@ package ring
 // valOf is the value the summing closure of verify adds for one ring element:
 // the int it stores, or 0 for the nil value a fresh ring has.
 ghost
-requires IntOrNil(v)
+requires  intOrNil(v)
 decreases
 pure func valOf(v any) (res int) {
 	return v == nil ? 0 : v.(int)
 }
 
-// IntOrNil is the precondition the summing closure puts on the values it is
+// intOrNil is the precondition the summing closure puts on the values it is
 // applied to: it asserts p.(int), so it can only run on ints and nils.
 ghost
 decreases
-pure func IntOrNil(v any) bool {
+pure func intOrNil(v any) bool {
 	return v == nil || typeOf(v) == type[int]
 }
 
-// SumOf is the sum verify expects to accumulate over a sequence of values.
+// sumOf is the sum verify expects to accumulate over a sequence of values.
 ghost
-requires forall k int :: {s[k]} 0 <= k && k < len(s) ==> IntOrNil(s[k])
+requires  forall k int :: {s[k]} 0 <= k && k < len(s) ==> intOrNil(s[k])
 decreases len(s)
-pure func SumOf(s seq[any]) (res int) {
-	return len(s) == 0 ? 0 : SumOf(s[:len(s)-1]) + valOf(s[len(s)-1])
+pure func sumOf(s seq[any]) (res int) {
+	return len(s) == 0 ? 0 : sumOf(s[:len(s)-1]) + valOf(s[len(s)-1])
 }
 
-// Counter is the Visitor the closure of verify implements: it counts the calls
+// counter is the Visitor the closure of verify implements: it counts the calls
 // and adds up the values it is given.
-type Counter struct {
+type counter struct {
 	n *int
 	s *int
 }
 
-pred (c Counter) Seen(ghost calls seq[any]) {
+pred (c counter) Seen(ghost calls seq[any]) {
 	acc(c.n) && acc(c.s) &&
-	(forall k int :: {calls[k]} 0 <= k && k < len(calls) ==> IntOrNil(calls[k])) &&
+	(forall k int :: {calls[k]} 0 <= k && k < len(calls) ==> intOrNil(calls[k])) &&
 	*c.n == len(calls) &&
-	*c.s == SumOf(calls)
+	*c.s == sumOf(calls)
 }
 
 ghost
 decreases
-pure func (c Counter) Accepts(v any) bool {
-	return IntOrNil(v)
+pure func (c counter) Accepts(v any) bool {
+	return intOrNil(v)
 }
 
 // sumN is the sum of the values makeN stores in a ring of n elements. It is
 // not ghost: the original test passes it to verify as an ordinary argument.
-requires 0 <= n
+requires  0 <= n
 decreases
 pure func sumN(n int) (res int) {
 	return (n*n + n) / 2
@@ -82,12 +82,13 @@ pure func sumN(n int) (res int) {
 // and vs, r is its first element -- Do reports the values from there -- N is
 // its length and, when sum is non-negative, sum is the total of its values.
 // A nil ring is the empty one, exactly as in the original.
-requires r != nil ==> Mem(rs, vs) && 0 < len(rs) && rs[0] == r
-requires r == nil ==> len(rs) == 0 && len(vs) == 0
-requires forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> IntOrNil(vs[k])
-requires N == len(rs)
-requires sum >= 0 ==> sum == SumOf(vs)
-ensures  r != nil ==> Mem(rs, vs) && IsInit(rs, vs)
+preserves r != nil ==> Mem(rs, vs)
+requires  r != nil ==> 0 < len(rs) && rs[0] == r
+requires  r == nil ==> len(rs) == 0 && len(vs) == 0
+requires  forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> intOrNil(vs[k])
+requires  N == len(rs)
+requires  sum >= 0 ==> sum == sumOf(vs)
+ensures   r != nil ==> IsInit(rs, vs)
 decreases
 func verify(r *Ring, N int, sum int, ghost rs seq[*Ring], ghost vs seq[any]) {
 	// Len
@@ -97,28 +98,32 @@ func verify(r *Ring, N int, sum int, ghost rs seq[*Ring], ghost vs seq[any]) {
 	// iteration
 	n = 0
 	s@ := 0
-	cl := requires IntOrNil(p)
+	cl := requires  intOrNil(p)
 	      preserves acc(&n) && acc(&s)
+	      ensures   n == old(n) + 1
+	      ensures   p == nil ==> s == old(s)
+	      ensures   p != nil && typeOf(p) == type[int] ==> s == old(s) + p.(int)
 	      decreases
-	      ensures n == old(n) + 1
-	      ensures p == nil ==> s == old(s)
-	      ensures p != nil && typeOf(p) == type[int] ==> s == old(s) + p.(int)
 	      func visit(ghost prev seq[any], p any) {
 		n = n + 1
 		if p != nil {
 			s = s + p.(int)
 		}
 	}
-	proof cl implements VisitSpec{Counter{&n, &s}} {
-		unfold Counter{&n, &s}.Seen(prev)
+	proof cl implements VisitSpec{counter{&n, &s}} {
+		unfold counter{&n, &s}.Seen(prev)
 		cl(prev, v) as visit
 		assert (prev ++ seq[any]{v})[:len(prev)] == prev
 		assert (prev ++ seq[any]{v})[len(prev)] === v
-		fold Counter{&n, &s}.Seen(prev ++ seq[any]{v})
+		fold counter{&n, &s}.Seen(prev ++ seq[any]{v})
 	}
-	fold Counter{&n, &s}.Seen(seq[any]{})
-	r.Do(cl, rs, vs, Counter{&n, &s})
-	unfold Counter{&n, &s}.Seen(vs)
+	fold counter{&n, &s}.Seen(seq[any]{})
+	r.Do(cl, rs, vs, counter{&n, &s})
+	// Recover len(vs) == len(rs), which Mem seals, from the Size getter.
+	ghost if r != nil {
+		assert Size(rs, vs) == len(rs)
+	}
+	unfold counter{&n, &s}.Seen(vs)
 	assert n == N
 	assert sum >= 0 ==> s == sum
 
@@ -133,8 +138,8 @@ func verify(r *Ring, N int, sum int, ghost rs seq[*Ring], ghost vs seq[any]) {
 // verifyConnections is the "connections" and "Next, Prev" blocks of verify:
 // walk the ring once with the raw pointers and check that prev is the inverse
 // of next, then that Next and Prev agree with those pointers.
-requires Mem(rs, vs) && 0 < len(rs) && rs[0] == r && IsInit(rs, vs)
-ensures  Mem(rs, vs) && IsInit(rs, vs)
+preserves Mem(rs, vs) && IsInit(rs, vs)
+requires  0 < len(rs) && rs[0] == r
 decreases
 func verifyConnections(r *Ring, ghost rs seq[*Ring], ghost vs seq[any]) {
 	ghost m := len(rs)
@@ -173,8 +178,9 @@ func verifyConnections(r *Ring, ghost rs seq[*Ring], ghost vs seq[any]) {
 }
 
 // verifyMoves is the "Move" block of verify.
-requires Mem(rs, vs) && 0 < len(rs) && rs[0] == r && N == len(rs)
-ensures  Mem(rs, vs) && IsInit(rs, vs)
+preserves Mem(rs, vs)
+requires  0 < len(rs) && rs[0] == r && N == len(rs)
+ensures   IsInit(rs, vs)
 decreases
 func verifyMoves(r *Ring, N int, ghost rs seq[*Ring], ghost vs seq[any]) {
 	m0 := r.Move(0, rs, vs, 0)
@@ -206,11 +212,11 @@ func verifyMoves(r *Ring, N int, ghost rs seq[*Ring], ghost vs seq[any]) {
 // abstraction rs throughout and only tracks the position of the handle; after
 // n steps the handle is back at rs[0], which is why the result is again the
 // ring's first element.
-ensures  n <= 0 ==> ret == nil && len(rs) == 0 && len(vs) == 0
-ensures  n > 0 ==> ret != nil && Mem(rs, vs) && len(rs) == n && rs[0] == ret
-ensures  n > 0 ==> IsInit(rs, vs)
-ensures  len(vs) == len(rs)
-ensures  forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> vs[k] === k+1
+ensures   n <= 0 ==> ret == nil && len(rs) == 0 && len(vs) == 0
+ensures   n > 0 ==> ret != nil && Mem(rs, vs) && len(rs) == n && rs[0] == ret
+ensures   n > 0 ==> IsInit(rs, vs)
+ensures   len(vs) == len(rs)
+ensures   forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> vs[k] === k+1
 decreases
 func makeN(n int) (ghost rs seq[*Ring], ghost vs seq[any], ret *Ring) {
 	rs0, vs0, r := New(n)
@@ -249,14 +255,14 @@ func TestNew() {
 
 // testNewAt is one iteration of both loops of TestNew: a fresh ring of i
 // elements, whose values are unset, and one built by makeN.
-requires 0 <= i
+requires  0 <= i
 decreases
 func testNewAt(i int) {
 	rs, vs, r := New(i)
 	verify(r, i, -1, rs, vs)
 
 	qs, qvs, q := makeN(i)
-	assert forall k int :: {qvs[k]} 0 <= k && k < len(qvs) ==> IntOrNil(qvs[k])
+	assert forall k int :: {qvs[k]} 0 <= k && k < len(qvs) ==> intOrNil(qvs[k])
 	sumIsSumN(qvs, i)
 	verify(q, i, sumN(i), qs, qvs)
 }
@@ -264,16 +270,16 @@ func testNewAt(i int) {
 // sumIsSumN proves that the values makeN stores add up to sumN, by induction
 // on the length of the ring.
 ghost
-requires 0 <= n && len(vs) == n
-requires forall k int :: {vs[k]} 0 <= k && k < n ==> vs[k] === k+1
-ensures  forall k int :: {vs[k]} 0 <= k && k < n ==> IntOrNil(vs[k])
-ensures  SumOf(vs) == sumN(n)
+requires  0 <= n && len(vs) == n
+requires  forall k int :: {vs[k]} 0 <= k && k < n ==> vs[k] === k+1
+ensures   forall k int :: {vs[k]} 0 <= k && k < n ==> intOrNil(vs[k])
+ensures   sumOf(vs) == sumN(n)
 decreases n
 func sumIsSumN(vs seq[any], n int) {
 	if n > 0 {
 		ghost ws := vs[:n-1]
 		sumIsSumN(ws, n-1)
-		assert SumOf(vs) == SumOf(ws) + valOf(vs[n-1])
+		assert sumOf(vs) == sumOf(ws) + valOf(vs[n-1])
 		assert valOf(vs[n-1]) == n
 		assert sumN(n-1) + n == sumN(n)
 	}
@@ -290,12 +296,12 @@ func TestMoveEmptyRing() {
 
 	res := (&r).Move(1, rs, vs, 0)
 	assert res == &r
-	assert vs[0] == nil && IntOrNil(vs[0])
+	assert vs[0] == nil && intOrNil(vs[0])
 	assert vs[:0] == seq[any]{}
 	assert valOf(vs[0]) == 0
-	assert SumOf(seq[any]{}) == 0
-	assert SumOf(vs) == SumOf(vs[:len(vs)-1]) + valOf(vs[len(vs)-1])
-	assert SumOf(vs) == 0
+	assert sumOf(seq[any]{}) == 0
+	assert sumOf(vs) == sumOf(vs[:len(vs)-1]) + valOf(vs[len(vs)-1])
+	assert sumOf(vs) == 0
 	verify(&r, 1, 0, rs, vs)
 }
 

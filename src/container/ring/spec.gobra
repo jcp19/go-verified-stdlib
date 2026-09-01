@@ -66,33 +66,46 @@ pred Mem(rs seq[*Ring], vs seq[any]) {
 // the package's own tests read r.next and r.prev directly, so it has to be
 // observable.
 ghost
-requires Mem(rs, vs)
+requires  Mem(rs, vs)
 decreases
 pure func IsInit(rs seq[*Ring], vs seq[any]) bool {
 	return unfolding Mem(rs, vs) in rs[0].next != nil
 }
 
+// Size is the number of elements of the ring rs. Its postcondition exports the
+// shape invariants of Mem -- a ring is never empty, and it stores one value per
+// element -- which are otherwise sealed inside the folded predicate. A contract
+// that mentions rs and vs together is not well-formed without them.
+ghost
+requires  Mem(rs, vs)
+ensures   0 < res && res == len(rs) && res == len(vs)
+decreases
+pure func Size(rs seq[*Ring], vs seq[any]) (res int) {
+	return unfolding Mem(rs, vs) in len(rs)
+}
+
 // Wrap normalizes the position k of a ring of m elements to [0, m). It is the
 // "% r.Len()" of the doc comments of Move and Unlink.
 ghost
-requires 0 < m
-ensures  0 <= res && res < m
+requires  0 < m
+ensures   0 <= res && res < m
 decreases
 pure func Wrap(k int, m int) (res int) {
 	return ((k % m) + m) % m
 }
 
-// Step is Wrap phrased as n single steps around a ring of m elements, which is
-// how Move actually walks. Move's loop invariant is stated with Step and
-// StepIsWrap (lemmas.gobra) bridges it to the closed form used in the contract.
+// step is Wrap phrased as n single steps around a ring of m elements, which is
+// how Move actually walks. Move's loop invariant is stated with step and
+// stepIsWrap (lemmas.gobra) bridges it to the closed form used in the contract.
+// It is package-internal: no exported contract mentions it.
 ghost
-requires 0 < m && 0 <= i && i < m
-ensures  0 <= res && res < m
+requires  0 < m && 0 <= i && i < m
+ensures   0 <= res && res < m
 decreases n < 0 ? -n : n
-pure func Step(i int, n int, m int) (res int) {
+pure func step(i int, n int, m int) (res int) {
 	return n == 0 ? i :
-		(n > 0 ? Step(i+1 == m ? 0 : i+1, n-1, m) :
-			Step(i == 0 ? m-1 : i-1, n+1, m))
+		(n > 0 ? step(i+1 == m ? 0 : i+1, n-1, m) :
+			step(i == 0 ? m-1 : i-1, n+1, m))
 }
 
 // Visitor is the ghost counterpart of the function a client passes to Do.
@@ -111,7 +124,7 @@ type Visitor interface {
 // VisitSpec is the closure specification of the function passed to Do: one
 // call extends the sequence of values already seen by the value it is given.
 ghost
-requires vis != nil && vis.Seen(prev) && vis.Accepts(v)
-ensures  vis.Seen(prev ++ seq[any]{v})
+requires  vis != nil && vis.Seen(prev) && vis.Accepts(v)
+ensures   vis.Seen(prev ++ seq[any]{v})
 decreases
 func VisitSpec(ghost vis Visitor, ghost prev seq[any], v any)

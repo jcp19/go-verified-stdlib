@@ -14,7 +14,7 @@ annotation, no `requires false`, and no `assume` anywhere on its path.
 | `(*Ring).init` | verified | private; lazy initialization of the zero value |
 | `(*Ring).Next` | verified | |
 | `(*Ring).Prev` | verified | |
-| `(*Ring).Move` | verified | doc-faithful `Wrap(i+n, len(rs))`, via `StepIsWrap` |
+| `(*Ring).Move` | verified | doc-faithful `Wrap(i+n, len(rs))`, via `stepIsWrap` |
 | `New` | verified | ghost results carry the ring it built |
 | `(*Ring).Len` | verified | |
 | `(*Ring).Do` | verified | closure specification `VisitSpec` / `Visitor` |
@@ -26,13 +26,28 @@ annotation, no `requires false`, and no `assume` anywhere on its path.
 | Member | File | State |
 | --- | --- | --- |
 | `Mem` | spec.gobra | predicate |
-| `IsInit`, `Wrap`, `Step` | spec.gobra | verified |
+| `IsInit`, `Size`, `Wrap`, `step` | spec.gobra | verified |
 | `Visitor`, `VisitSpec` | spec.gobra | verified |
-| `WrapShift`, `StepIsWrap` | lemmas.gobra | verified |
+| `wrapShift`, `stepIsWrap` | lemmas.gobra | verified |
 
-`WrapShift` has an empty body: its postcondition `Wrap(k+m, m) == Wrap(k, m)`
+`Mem`, `IsInit`, `Size`, `Wrap`, `Visitor` and `VisitSpec` are exported because
+they appear in exported contracts; `step`, `wrapShift` and `stepIsWrap` are
+package-internal scaffolding for `Move`'s proof and are not.
+
+`wrapShift` has an empty body: its postcondition `Wrap(k+m, m) == Wrap(k, m)`
 is discharged by Z3's axioms for `%` alone. That is a proof, not an
 assumption — the body is empty because nothing further is needed.
+
+`VisitSpec` has no body at all. That is the closure-specification idiom, not an
+assumption: it is never called, it only states the contract that
+`proof cl implements VisitSpec{...}` has to discharge. Gobra's own regression
+suite writes closure specs the same way.
+
+The `trusted` on the two stubs is **not** decoration. It suppresses
+type-checking of their bodies, which call `Next`, `Prev` and `Move` without
+their ghost arguments; dropping it while keeping `requires false` produces five
+Gobra type errors. Anyone reviving `Link` has to thread the ghost arguments
+through first.
 
 ## Tests
 
@@ -86,6 +101,41 @@ the failure from one obligation to the next, at 2.5x the run time); and
 describing the results as slices of `rs` rather than as concatenations of
 ghost sequences (diverged outright — `Seq_take`/`Seq_drop` terms, exactly the
 hazard `gobra-improve-perf` warns about).
+
+## Proof stability in New
+
+A style review reported that `New`'s loop invariant fails intermittently with
+"Quantified resource rs[k] might not be injective", 2 runs in 6. **I could not
+reproduce that**: six consecutive runs of the same tree all passed. The most
+likely explanation for the difference is machine load — with
+`assert_timeout: 5000`, a query close to the budget is reported as a failure
+rather than as a timeout, so a loaded machine can turn a slow check into an
+error.
+
+The invariant was hardened anyway, because the fragility it points at is real
+and the fix is free. Silicon consumes loop-invariant conjuncts left to right,
+so the quantified permission was being re-inhaled *before* the distinctness
+fact its injectivity check needs. Distinctness is now a separate conjunct
+listed first, where it needs no permission of its own; the linkage half stays
+after the permission, which it does need. The package verifies about 25%
+faster as a result (58 s to 43 s), which is consistent with the check no longer
+depending on the solver rediscovering the fact.
+
+## Known limitation: Do is callable only from rs[0]
+
+`Next`, `Prev`, `Move` and `Len` take a free ghost index `i` with `rs[i] == r`,
+so any handle on the ring can call them. `Do` alone requires `rs[0] == r`,
+because it reports the values in the order it visits them — and the package
+ships no lemma to re-root `Mem(rs, vs)` at another element. A client that
+walked away from `rs[0]` therefore cannot call `Do` at all.
+
+That is a real gap in the design's own claim that "every element is an equal
+handle", and it is the same wall `Link` hit: a re-rooting lemma has to rotate
+the sequence, which is a split followed by a merge of the quantified-permission
+footprint, and the split is what this encoding does not support. Generalizing
+`Do` to `rs[i] == r` with `ensures vis.Seen(vs[i:] ++ vs[:i])` is the other
+option; it was not attempted, and the slicing in that postcondition is itself a
+known performance hazard.
 
 ## Scope
 

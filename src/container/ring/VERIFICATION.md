@@ -29,7 +29,7 @@ ghost index `i` satisfying `rs[i] == r`:
 // @ preserves Mem(rs, vs)
 // @ requires  0 <= i && i < len(rs) && rs[i] == r
 // @ ensures   IsInit(rs, vs)
-// @ ensures   ret == rs[i > 0 ? i-1 : len(rs)-1]
+// @ ensures   ret == rs[i > 0 ? i-1 : len(rs)-1] && ret != nil
 func (r *Ring) Prev( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (ret *Ring)
 ```
 
@@ -58,6 +58,12 @@ abstraction cannot drift when it is a parameter.
 
 `Do` is the one member that asks for `rs[0] == r`. It reports the values in
 the order it visits them, so the sequence has to start where the walk does.
+That is also this design's sharpest limitation, and it belongs next to the
+claim above: the package ships no lemma to re-root `Mem(rs, vs)` at another
+element, so a client holding a handle that is not `rs[0]` cannot call `Do` at
+all. Re-rooting means rotating the sequence, which is a split of the
+quantified-permission footprint followed by a merge — and the split is exactly
+what defeated `Link`. See `gobra-status.md`.
 
 ### The zero value
 
@@ -94,9 +100,9 @@ client-visible behaviour depends on it.
   `Do` stop when the walk returns to `r`, and concluding "then I have taken
   exactly `len(rs)` steps" is precisely the step that needs it.
 - **`Move` is proved with one description of the walk and specified with
-  another.** The loop invariant uses `Step`, which counts single steps exactly
+  another.** The loop invariant uses `step`, which counts single steps exactly
   as the code does; the contract uses `Wrap(i+n, len(rs))`, which is the
-  `% r.Len()` of the doc comment. `StepIsWrap` bridges them by induction on
+  `% r.Len()` of the doc comment. `stepIsWrap` bridges them by induction on
   `n`. Stating the invariant directly in `Wrap` would have put symbolic modular
   arithmetic in every iteration.
 - **A neighbour is derived where it is needed, not stored.** `Next`, `Prev` and
@@ -114,7 +120,17 @@ client-visible behaviour depends on it.
   of updating a ghost index from a `for` post statement.
 - **`New` builds its ring under raw quantified permissions** rather than an
   auxiliary predicate: the ring is not closed until the last two assignments,
-  so there is nothing to fold until then.
+  so there is nothing to fold until then. Its invariants list **distinctness
+  first, before the quantified permission**: Silicon consumes invariant
+  conjuncts left to right, and re-inhaling that permission for the extended
+  sequence is what needs the injectivity of `k |-> rs[k]`. Leaving the fact to
+  be rediscovered from the combined quantifier that used to follow made the
+  check depend on the solver's search order, and cost about 25% of the
+  package's runtime.
+- **`Size` exports what `Mem` seals.** `0 < len(rs)` and `len(rs) == len(vs)`
+  are invisible outside the predicate, which makes *any* contract mentioning
+  `rs` and `vs` together ill-formed for a client. The getter is what keeps the
+  abstraction usable from another package.
 - **`Do` uses a closure specification.** `Visitor` is a ghost interface with a
   predicate `Seen(calls)` — the client's invariant after `f` has been applied
   to exactly `calls` — and a pure `Accepts(v)`. `Accepts` is what lets a

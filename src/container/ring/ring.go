@@ -23,7 +23,7 @@ type Ring struct {
 // @ preserves acc(r)
 // @ ensures   ret == r
 // @ ensures   r.next == r && r.prev == r
-// @ ensures  r.Value === old(r.Value)
+// @ ensures   r.Value === old(r.Value)
 // @ decreases
 func (r *Ring) init() (ret *Ring) {
 	r.next = r
@@ -35,7 +35,7 @@ func (r *Ring) init() (ret *Ring) {
 // @ preserves Mem(rs, vs)
 // @ requires  0 <= i && i < len(rs) && rs[i] == r
 // @ ensures   IsInit(rs, vs)
-// @ ensures   ret == rs[i+1 < len(rs) ? i+1 : 0]
+// @ ensures   ret == rs[i+1 < len(rs) ? i+1 : 0] && ret != nil
 // @ decreases
 func (r *Ring) Next( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (ret *Ring) {
 	//@ unfold Mem(rs, vs)
@@ -60,7 +60,7 @@ func (r *Ring) Next( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/
 // @ preserves Mem(rs, vs)
 // @ requires  0 <= i && i < len(rs) && rs[i] == r
 // @ ensures   IsInit(rs, vs)
-// @ ensures   ret == rs[i > 0 ? i-1 : len(rs)-1]
+// @ ensures   ret == rs[i > 0 ? i-1 : len(rs)-1] && ret != nil
 // @ decreases
 func (r *Ring) Prev( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (ret *Ring) {
 	//@ unfold Mem(rs, vs)
@@ -82,10 +82,14 @@ func (r *Ring) Prev( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/
 // Move moves n % r.Len() elements backward (n < 0) or forward (n >= 0)
 // in the ring and returns that ring element. r must not be empty.
 //
+// Note on n: the loops below drive the parameter itself to zero, so the n of
+// the postcondition is the argument as passed (Gobra reads a parameter in a
+// postcondition in the pre-state), while the n of the loop invariants is the
+// steps still to take. n0 holds the entry value for the invariants.
 // @ preserves Mem(rs, vs)
 // @ requires  0 <= i && i < len(rs) && rs[i] == r
 // @ ensures   IsInit(rs, vs)
-// @ ensures   ret == rs[Wrap(i+n, len(rs))]
+// @ ensures   ret == rs[Wrap(i+n, len(rs))] && ret != nil
 // @ decreases
 func (r *Ring) Move(n int /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/) (ret *Ring) {
 	//@ ghost m := len(rs)
@@ -109,7 +113,7 @@ func (r *Ring) Move(n int /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost i i
 		//@ invariant IsInit(rs, vs)
 		//@ invariant 0 <= idx && idx < m && r == rs[idx]
 		//@ invariant n <= 0
-		//@ invariant Step(idx, n, m) == Step(i, n0, m)
+		//@ invariant step(idx, n, m) == step(i, n0, m)
 		//@ decreases -n
 		for ; n < 0; n++ {
 			//@ ghost idx2 := idx == 0 ? m-1 : idx-1
@@ -125,7 +129,7 @@ func (r *Ring) Move(n int /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost i i
 		//@ invariant IsInit(rs, vs)
 		//@ invariant 0 <= idx && idx < m && r == rs[idx]
 		//@ invariant n >= 0
-		//@ invariant Step(idx, n, m) == Step(i, n0, m)
+		//@ invariant step(idx, n, m) == step(i, n0, m)
 		//@ decreases n
 		for ; n > 0; n-- {
 			//@ ghost idx2 := idx+1 == m ? 0 : idx+1
@@ -137,8 +141,8 @@ func (r *Ring) Move(n int /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost i i
 			//@ idx = idx2
 		}
 	}
-	//@ assert Step(idx, n, m) == idx
-	//@ StepIsWrap(i, n0, m)
+	//@ assert step(idx, n, m) == idx
+	//@ stepIsWrap(i, n0, m)
 	return r
 }
 
@@ -163,8 +167,13 @@ func New(n int) ( /*@ ghost rs seq[*Ring], ghost vs seq[any], @*/ ret *Ring) {
 	//@ invariant 1 <= i && i <= n
 	//@ invariant len(rs) == i && len(vs) == i
 	//@ invariant rs[0] == r && rs[i-1] == p
+	// The elements are pairwise distinct. This conjunct needs no permission, and
+	// it has to come before the quantified permission below: Silicon consumes
+	// invariant conjuncts left to right, and re-inhaling that permission for the
+	// extended sequence is exactly what needs the injectivity of k |-> rs[k].
+	//@ invariant forall k, l int :: {rs[k], rs[l]} 0 <= k && k < len(rs) && 0 <= l && l < len(rs) && rs[k] == rs[l] ==> k == l
 	//@ invariant forall k int :: {rs[k]} 0 <= k && k < len(rs) ==> acc(rs[k]) && rs[k] != nil && rs[k].Value === vs[k]
-	//@ invariant forall k, l int :: {rs[k], rs[l]} 0 <= k && k < len(rs) && 0 <= l && l < len(rs) ==> (rs[k] == rs[l] ==> k == l) && (l == k+1 ==> rs[k].next == rs[l] && rs[l].prev == rs[k])
+	//@ invariant forall k, l int :: {rs[k], rs[l]} 0 <= k && k < len(rs) && 0 <= l && l < len(rs) && l == k+1 ==> rs[k].next == rs[l] && rs[l].prev == rs[k]
 	//@ invariant rs[0].prev == nil && rs[i-1].next == nil
 	//@ invariant forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> vs[k] == nil
 	//@ decreases n - i
@@ -203,14 +212,11 @@ func New(n int) ( /*@ ghost rs seq[*Ring], ghost vs seq[any], @*/ ret *Ring) {
 // after r. The result points to the element following the
 // last element of s after insertion.
 //
-// NOTE: Link is not verified. Its contract is stubbed out with
-// "requires false", so no client can call it and nothing in this package rests
-// on an unproved assumption. gobra-status.md and VERIFICATION.md record the
-// measurements behind that: the merge of two rings verifies, but the same-ring
-// case has to split one quantified-permission footprint into two, which this
-// encoding of Mem does not make tractable.
+// NOTE: not verified; see gobra-status.md. The trusted here is not decoration:
+// it suppresses type-checking of the body, which calls Next, Prev and Move
+// without their ghost arguments.
 // @ trusted
-// @ requires false
+// @ requires  false
 func (r *Ring) Link(s *Ring) *Ring {
 	n := r.Next()
 	if s != nil {
@@ -229,10 +235,9 @@ func (r *Ring) Link(s *Ring) *Ring {
 // at r.Next(). If n % r.Len() == 0, r remains unchanged.
 // The result is the removed subring. r must not be empty.
 //
-// NOTE: Unlink is not verified either: it is defined in terms of Link, which
-// is not. See the note on Link.
+// NOTE: not verified; see the note on Link.
 // @ trusted
-// @ requires false
+// @ requires  false
 func (r *Ring) Unlink(n int) *Ring {
 	if n <= 0 {
 		return nil
@@ -247,7 +252,6 @@ func (r *Ring) Unlink(n int) *Ring {
 // @ requires  r != nil ==> 0 <= i && i < len(rs) && rs[i] == r
 // @ requires  r == nil ==> len(rs) == 0
 // @ ensures   r != nil ==> IsInit(rs, vs)
-// @ ensures   r != nil ==> len(vs) == len(rs)
 // @ ensures   res == len(rs)
 // @ decreases
 func (r *Ring) Len( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (res int) {

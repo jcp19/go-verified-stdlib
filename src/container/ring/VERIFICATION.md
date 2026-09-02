@@ -1,13 +1,15 @@
 # Gobra verification of container/ring
 
-Seven of the nine members of this package are verified with
+Eight of the nine members of this package are verified with
 [Gobra](https://github.com/viperproject/gobra): memory safety, absence of
 panics, termination and functional correctness against their doc comments,
-with **no assumptions and no trusted members**. The two that are not —
-`Link` and `Unlink` — carry `requires false`, so no client can call them and
-nothing else in the package rests on an unproved property. `gobra-status.md`
-is the per-member inventory and records, with measurements, why those two
-were not finished.
+with **no assumptions**. `Link` is among them, but its contract covers two of
+its three documented cases: `s == nil` and `s` on a different ring. The
+same-ring case — which is all `Unlink` does — is excluded by `Link`'s
+precondition, and `Unlink` is the package's one `trusted` member, stubbed with
+`requires false`. So no client can reach the unproved case and nothing else in
+the package rests on it. `gobra-status.md` is the per-member inventory and
+records, with measurements, exactly where the same-ring cut stops.
 
 ## Abstraction
 
@@ -62,8 +64,9 @@ That is also this design's sharpest limitation, and it belongs next to the
 claim above: the package ships no lemma to re-root `Mem(rs, vs)` at another
 element, so a client holding a handle that is not `rs[0]` cannot call `Do` at
 all. Re-rooting means rotating the sequence, which is a split of the
-quantified-permission footprint followed by a merge — and the split is exactly
-what defeated `Link`. See `gobra-status.md`.
+quantified-permission footprint followed by a merge — the same surgery that
+defeated `Link`. See `gobra-status.md`, which records what that cost and, with
+measurements, which part of it is the real obstacle.
 
 ### The zero value
 
@@ -127,6 +130,14 @@ client-visible behaviour depends on it.
   be rediscovered from the combined quantifier that used to follow made the
   check depend on the solver's search order, and cost about 25% of the
   package's runtime.
+- **`Link` splices two footprints without ever splitting one.** The
+  different-ring case is a merge: both rings are unfolded, the four pointers
+  are written, and the result folds straight back as one `Mem`. Three small
+  lemmas keep the proof context small enough to terminate — `memDisjoint`,
+  which reads the two rings' disjointness off the fact that both are held at
+  once (an element of both would carry `acc` twice), and `spliceRead` /
+  `spliceReadV`, which say what the merged sequences are in terms of the two
+  the permissions are indexed by. Inlining any of them makes `Link` diverge.
 - **`Size` exports what `Mem` seals.** `0 < len(rs)` and `len(rs) == len(vs)`
   are invisible outside the predicate, which makes *any* contract mentioning
   `rs` and `vs` together ill-formed for a client. The getter is what keeps the
@@ -163,16 +174,20 @@ Two Gobra limitations forced a workaround rather than a code change:
 
 ## Tests (ring_test.gobra)
 
-`verify`, `makeN`, `sumN`, `TestNew` and `TestMoveEmptyRing` are reproduced as
-verified clients; every `t.Errorf` becomes an `assert` proved unreachable, so
-the tests hold for the specifications statically. `verify` is split into three
+`verify`, `makeN`, `sumN`, `TestNew`, `TestMoveEmptyRing` and `TestLink2` are
+reproduced as verified clients; every `t.Errorf` becomes an `assert` proved
+unreachable, so the tests hold for the specifications statically. `verify` is split into three
 functions, one per block of the original, and `TestNew`'s two loops are
 unrolled into one call per length — both to keep each proof small. Results of
 impure calls are stored in locals before being compared, because Gobra does not
 allow a call inside an assertion.
 
-The six tests that call `Link` or `Unlink` are not translated: those members
-carry `requires false`, so no client can call them.
+`TestLink2` is the original's different-ring test in full, up to the
+twelve-element ring its last splice produces; it is also what shows `Link`'s
+contract is usable rather than vacuously true. Four tests are not translated:
+three call `Unlink`, `TestLink1` links a ring to itself, and `TestLink3` calls
+`verify` on the element `Link` returns rather than the one `Mem` is rooted at.
+See `gobra-status.md`.
 
 One test is *added*, `testMoveIsNotDegenerate`. The original checks Move only
 by comparing `Move(n)` with `Move(n % Len())`, which a contract saying "Move
@@ -180,9 +195,9 @@ returns the receiver" would satisfy just as well; the added test pins the
 returned element down on a three-element ring.
 
 Every member of the package and every test function was checked for vacuity by
-placing `assert false` in its body and confirming that Gobra reports an error —
-7 for the package, 6 for the tests. There is no `assume` anywhere in the
-package, and the only `trusted` members are the two stubs.
+placing `assert false` in its body and confirming that Gobra reports an error.
+There is no `assume` anywhere in the package, and `Unlink` is the only
+`trusted` member.
 
 ## Running the verification
 

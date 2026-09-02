@@ -46,3 +46,52 @@ func stepIsWrap(i int, n int, m int) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Splicing two rings into one.
+//
+// Link's different-ring case merges two footprints. The lemmas below are the
+// bookkeeping that merge needs: that the two rings are disjoint, and what the
+// sequences of the merged ring are in terms of the sequences the two
+// footprints are indexed by. Splitting them out of Link is what keeps its
+// proof context small enough to terminate.
+// ---------------------------------------------------------------------------
+
+// memDisjoint reads the disjointness of two rings off the fact that both are
+// held at once: an element of both would carry acc twice.
+ghost
+requires  Mem(rs, vs) && Mem(ss, ws)
+ensures   Mem(rs, vs) && Mem(ss, ws)
+ensures   forall t, u int :: {rs[t], ss[u]} 0 <= t && t < len(rs) && 0 <= u && u < len(ss) ==>
+	rs[t] != ss[u]
+decreases
+func memDisjoint(rs seq[*Ring], vs seq[any], ss seq[*Ring], ws seq[any]) {
+	unfold Mem(rs, vs)
+	unfold Mem(ss, ws)
+	assert forall t, u int :: {rs[t], ss[u]} 0 <= t && t < len(rs) && 0 <= u && u < len(ss) ==>
+		rs[t] != ss[u]
+	fold Mem(rs, vs)
+	fold Mem(ss, ws)
+}
+
+// spliceRead: the merged ring is r, then all of ss, then the rest of rs.
+ghost
+requires  rs == seq[*Ring]{x} ++ ts
+requires  ars == seq[*Ring]{x} ++ ss ++ ts
+ensures   len(ars) == len(rs) + len(ss)
+ensures   forall t int :: {ars[t]} 0 <= t && t < len(ars) ==>
+	ars[t] == (t == 0 ? rs[0] : (t <= len(ss) ? ss[t-1] : rs[t-len(ss)]))
+decreases
+func spliceRead(ars seq[*Ring], rs seq[*Ring], x *Ring, ss seq[*Ring], ts seq[*Ring]) {
+}
+
+// spliceReadV is spliceRead on the values.
+ghost
+requires  vs == seq[any]{v} ++ tvs
+requires  avs == seq[any]{v} ++ ws ++ tvs
+ensures   len(avs) == len(vs) + len(ws)
+ensures   forall t int :: {avs[t]} 0 <= t && t < len(avs) ==>
+	avs[t] === (t == 0 ? vs[0] : (t <= len(ws) ? ws[t-1] : vs[t-len(ws)]))
+decreases
+func spliceReadV(avs seq[any], vs seq[any], v any, ws seq[any], tvs seq[any]) {
+}

@@ -212,21 +212,41 @@ func New(n int) ( /*@ ghost rs seq[*Ring], ghost vs seq[any], @*/ ret *Ring) {
 // after r. The result points to the element following the
 // last element of s after insertion.
 //
-// NOTE: not verified; see gobra-status.md. The trusted here is not decoration:
-// it suppresses type-checking of the body, which calls Next, Prev and Move
-// without their ghost arguments.
-// @ trusted
-// @ requires  false
-func (r *Ring) Link(s *Ring) *Ring {
-	n := r.Next()
+// The ghost arguments carry the decomposition the result is phrased in: ts is
+// rs without its first element r, and ss is the ring s belongs to. Requiring
+// Mem(ss, ws) is what restricts this contract to the different-ring case --
+// no client can produce a second Mem for elements it already owns through
+// Mem(rs, vs) -- so the same-ring case of the doc comment above is excluded
+// here rather than proved. See gobra-status.md.
+// @ requires  Mem(rs, vs) && 0 < len(rs) && rs[0] == r
+// @ requires  rs == seq[*Ring]{r} ++ ts && vs == seq[any]{v0} ++ tvs
+// @ requires  s != nil ==> Mem(ss, ws) && 0 < len(ss) && ss[0] == s
+// @ ensures   ret == (len(ts) > 0 ? ts[0] : r) && ret != nil
+// @ ensures   s == nil ==> Mem(rs, vs) && IsInit(rs, vs)
+// @ ensures   s != nil ==> Mem(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+// @ ensures   s != nil ==> IsInit(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+// @ decreases
+func (r *Ring) Link(s *Ring /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost v0 any, ghost ts seq[*Ring], ghost tvs seq[any], ghost ss seq[*Ring], ghost ws seq[any] @*/) (ret *Ring) {
+	n := r.Next( /*@ rs, vs, 0 @*/ )
 	if s != nil {
-		p := s.Prev()
+		p := s.Prev( /*@ ss, ws, 0 @*/ )
+		//@ ghost ars := seq[*Ring]{r} ++ ss ++ ts
+		//@ ghost avs := seq[any]{v0} ++ ws ++ tvs
+		//@ memDisjoint(rs, vs, ss, ws)
+		//@ spliceRead(ars, rs, r, ss, ts)
+		//@ spliceReadV(avs, vs, v0, ws, tvs)
+		//@ unfold Mem(rs, vs)
+		//@ unfold Mem(ss, ws)
 		// Note: Cannot use multiple assignment because
 		// evaluation order of LHS is not specified.
 		r.next = s
 		s.prev = r
 		n.prev = p
 		p.next = n
+		// The merged ring is one footprint, not two, so it folds straight back.
+		//@ assert forall t, u int :: {rs[t], ss[u]} 0 <= t && t < len(rs) && 0 <= u && u < len(ss) ==> rs[t] != ss[u]
+		//@ assert ars[0].next != nil
+		//@ fold Mem(ars, avs)
 	}
 	return n
 }
@@ -235,7 +255,11 @@ func (r *Ring) Link(s *Ring) *Ring {
 // at r.Next(). If n % r.Len() == 0, r remains unchanged.
 // The result is the removed subring. r must not be empty.
 //
-// NOTE: not verified; see the note on Link.
+// NOTE: not verified. Unlink is exactly the same-ring case of Link, which
+// Link's contract excludes; see gobra-status.md for how far that proof got and
+// what stopped it. The trusted here is not decoration: it suppresses
+// type-checking of the body, which calls Move and Link without their ghost
+// arguments.
 // @ trusted
 // @ requires  false
 func (r *Ring) Unlink(n int) *Ring {

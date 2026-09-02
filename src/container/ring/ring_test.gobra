@@ -10,17 +10,27 @@
 // unreachable, so the tests hold for the specifications statically rather than
 // for one execution.
 //
-// Only the tests that do not call Link or Unlink are translated, because those
-// two members are not verified (see VERIFICATION.md); TestCornerCases,
-// TestLink1, TestLink2, TestLink3, TestLinkUnlink and TestUnlink are therefore
-// missing here. dump is not translated either: it only exists for debugging
-// and exercises fmt, not the ring.
+// Four of the original's tests are missing here, each for a reason that is a
+// property of the specification rather than of the test:
+//
+//   - TestCornerCases, TestUnlink and TestLinkUnlink call Unlink, which is not
+//     verified, and TestLink1 links a ring to itself, which Link's contract
+//     does not cover. See VERIFICATION.md and gobra-status.md.
+//   - TestLink3 calls verify on the *result* of Link, which is the element
+//     after the splice rather than the one Mem is rooted at, and the package
+//     ships no lemma to re-root Mem. That gap is the "Do is callable only from
+//     rs[0]" limitation recorded in gobra-status.md, met from the client side.
+//
+// dump is not translated either: it only exists for debugging and exercises
+// fmt, not the ring.
 //
 // Deviations from the original, all semantics-preserving: results of impure
 // calls are stored in locals before they are compared, because Gobra does not
 // allow a call inside an assertion; verify is split into three functions, one
-// per block of the original, to keep each proof small; and the two loops of
-// TestNew are unrolled into one call per length.
+// per block of the original, to keep each proof small; the two loops of
+// TestNew are unrolled into one call per length; and the two values of
+// TestLink2 go into their rings through int locals, because Gobra keeps the
+// dynamic type of a boxed variable but not of a boxed literal.
 
 package ring
 
@@ -318,4 +328,95 @@ func testMoveIsNotDegenerate() {
 	assert y == qs[2]
 	z := q.Move(-1, qs, qvs, 0)
 	assert z == qs[2]
+}
+
+// sumOfConcat is the one fact about sumOf that a merged ring needs: the sum of
+// a concatenation is the sum of the parts. It goes by induction on the tail,
+// which is the shape sumOf itself recurses in.
+ghost
+requires  forall k int :: {a[k]} 0 <= k && k < len(a) ==> intOrNil(a[k])
+requires  forall k int :: {b[k]} 0 <= k && k < len(b) ==> intOrNil(b[k])
+ensures   forall k int :: {(a ++ b)[k]} 0 <= k && k < len(a ++ b) ==> intOrNil((a ++ b)[k])
+ensures   sumOf(a ++ b) == sumOf(a) + sumOf(b)
+decreases len(b)
+func sumOfConcat(a seq[any], b seq[any]) {
+	assert forall k int :: {(a ++ b)[k]} 0 <= k && k < len(a ++ b) ==>
+		(a ++ b)[k] === (k < len(a) ? a[k] : b[k-len(a)])
+	if len(b) == 0 {
+		assert a ++ b == a
+	} else {
+		ghost b2 := b[:len(b)-1]
+		sumOfConcat(a, b2)
+		assert (a ++ b)[:len(a ++ b)-1] == a ++ b2
+		assert (a ++ b)[len(a ++ b)-1] === b[len(b)-1]
+	}
+}
+
+// TestLink2 is the original's different-ring test: a one-element ring linked
+// to the empty ring, then to a second one-element ring, then a ring of ten
+// linked to the empty ring and to the two-element ring. Every t.Errorf of the
+// original is inside verify, which proves them unreachable.
+decreases
+func TestLink2() {
+	// var r0 *Ring; r1a := &Ring{Value: 42}; r1b := &Ring{Value: 77}
+	// The 42 goes into the ring through an int local and into the sequence
+	// through an any-typed ghost local holding the same variable: Gobra keeps
+	// the dynamic type of a boxed variable but not of a boxed literal, and
+	// intOrNil asks for exactly that type.
+	x42 := 42
+	r1a := &Ring{Value: x42}
+	ghost var v42 any = x42
+	ghost xs := seq[*Ring]{r1a}
+	ghost xvs := seq[any]{v42}
+	assert r1a.Value === v42
+	assert intOrNil(xvs[0]) && xvs[0] != nil && valOf(xvs[0]) == 42
+	assert xvs[:0] == seq[any]{} && sumOf(seq[any]{}) == 0
+	assert sumOf(xvs) == sumOf(xvs[:len(xvs)-1]) + valOf(xvs[len(xvs)-1])
+	assert sumOf(xvs) == 42
+	fold Mem(xs, xvs)
+
+	x77 := 77
+	r1b := &Ring{Value: x77}
+	ghost var v77 any = x77
+	ghost bs := seq[*Ring]{r1b}
+	ghost bvs := seq[any]{v77}
+	assert r1b.Value === v77
+	assert intOrNil(bvs[0]) && bvs[0] != nil && valOf(bvs[0]) == 77
+	assert bvs[:0] == seq[any]{} && sumOf(seq[any]{}) == 0
+	assert sumOf(bvs) == sumOf(bvs[:len(bvs)-1]) + valOf(bvs[len(bvs)-1])
+	assert sumOf(bvs) == 77
+	fold Mem(bs, bvs)
+
+	// r1a.Link(r0); verify(t, r1a, 1, 42)
+	r1a.Link(nil, xs, xvs, xvs[0], seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
+	verify(r1a, 1, 42, xs, xvs)
+
+	// r1a.Link(r1b); verify(t, r1a, 2, 42+77)
+	r1a.Link(r1b, xs, xvs, xvs[0], seq[*Ring]{}, seq[any]{}, bs, bvs)
+	ghost cs := seq[*Ring]{r1a} ++ bs ++ seq[*Ring]{}
+	ghost cvs := seq[any]{xvs[0]} ++ bvs ++ seq[any]{}
+	sumOfConcat(seq[any]{xvs[0]}, bvs)
+	assert sumOf(seq[any]{xvs[0]}) == 42
+	assert cvs == seq[any]{xvs[0]} ++ bvs
+	verify(r1a, 2, 42+77, cs, cvs)
+
+	// r10 := makeN(10); r10.Link(r0); verify(t, r10, 10, sumN(10))
+	qs, qvs, r10 := makeN(10)
+	ghost ts := qs[1:]
+	ghost tvs := qvs[1:]
+	assert qs == seq[*Ring]{r10} ++ ts && qvs == seq[any]{qvs[0]} ++ tvs
+	assert forall k int :: {qvs[k]} 0 <= k && k < len(qvs) ==> intOrNil(qvs[k])
+	sumIsSumN(qvs, 10)
+	r10.Link(nil, qs, qvs, qvs[0], ts, tvs, seq[*Ring]{}, seq[any]{})
+	verify(r10, 10, sumN(10), qs, qvs)
+
+	// r10.Link(r1a); verify(t, r10, 12, sumN(10)+42+77)
+	assert forall k int :: {tvs[k]} 0 <= k && k < len(tvs) ==> intOrNil(tvs[k])
+	sumOfConcat(seq[any]{qvs[0]}, tvs)
+	r10.Link(r1a, qs, qvs, qvs[0], ts, tvs, cs, cvs)
+	ghost ds := seq[*Ring]{r10} ++ cs ++ ts
+	ghost dvs := seq[any]{qvs[0]} ++ cvs ++ tvs
+	sumOfConcat(seq[any]{qvs[0]}, cvs)
+	sumOfConcat(seq[any]{qvs[0]} ++ cvs, tvs)
+	verify(r10, 12, sumN(10)+42+77, ds, dvs)
 }

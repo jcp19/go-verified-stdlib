@@ -87,11 +87,53 @@ than guessed:
 
 So `Link`'s missing proof is not one stubborn assertion; it is that this
 encoding of ownership does not support splitting a footprint by index range.
-The likely fix is to quantify ownership over the *pointer* (`forall x *Ring ::
-x in xs ==> acc(x)`, whose receiver is trivially injective) instead of over the
-position, which would make the split set reasoning rather than index
-re-mapping — at the cost of re-doing `Mem` and re-verifying the seven members
-that currently depend on it.
+
+### The pointer-quantified encoding: tried, and how far it got
+
+Quantifying ownership over the *pointer* rather than the position — `forall x
+*Ring :: {x elem xs} x elem xs ==> acc(x)`, whose receiver is the bound
+variable and so trivially injective — was tried. It **does** remove the
+blocker above, and it is cheaper to adopt than expected, but it does not on its
+own finish `Link`. Measured, on the same machine as the numbers above:
+
+| Step | Result |
+| --- | --- |
+| Split, merge, and three-way split of a pointer-quantified footprint | verifies, 17 s (the index-quantified split fails after 4 m 54 s) |
+| One, two and four field writes through such a footprint | verifies, 6 s |
+| Carve four elements out, write through them, weld back | verifies, 7 s |
+| `toSet` / `fromSet`: hand the footprint between `Mem` and the pointer form | verifies, 8 s |
+| Sequence distinctness to pointwise set disjointness | verifies, once given the index mapping |
+| Two rings held at once are disjoint | verifies, if derived while both are unfolded |
+
+Two things follow. First, the split really is the part the pointer form fixes.
+Second — and this was not obvious beforehand — `Mem` would **not** have to
+change: `toSet` and `fromSet` convert between the two forms cheaply, so `Link`
+can do its surgery in the set world while the other seven members keep the
+index form untouched. The earlier estimate in this file, that adopting the
+pointer form means re-doing `Mem` and re-verifying seven members, was wrong.
+
+What stops it is a second obstacle that the first one was hiding:
+
+- **A field write splits the chunk of a quantified permission.** A fragmented
+  chunk can still be `fold`ed into a predicate — which is why the
+  different-ring case, a merge, works — but it can no longer be handed over as
+  a bare quantified permission. Converting the footprint after the surgery
+  fails with "Permission to rs[i] might not suffice", and so does welding two
+  fragments back together.
+- **Splitting before the surgery avoids that, but then the split has to frame
+  what the elements hold.** Exhaling and re-inhaling a quantified permission
+  hands back a fresh snapshot, so the splitting lemma needs `old(...)` clauses
+  for `Value`, `next` and `prev`, reachable through the index mapping. That is
+  where the attempt stalls: at `assert_timeout` 5000 the call fails on
+  "Permission to ars[i].next might not suffice", and at 30000 Silicon throws
+  instead of answering.
+
+So the ordering constraint is the live problem: the writes want the footprint
+whole, the cut wants it split, and whichever comes second pays. A next attempt
+should start there — for instance by carving the four written elements out as
+individual `acc`s rather than as a quantified permission, so that no chunk is
+ever fragmented — rather than by re-litigating the encoding, which the table
+above settles.
 
 Things that were tried and did not help, each measured: raising
 `assert_timeout` to 20 s and 60 s (verification stopped terminating rather

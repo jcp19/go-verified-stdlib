@@ -14,7 +14,7 @@ The interesting question here is not whether the standard library *can* be
 verified — it is how much of that work can be delegated. Each verified package in
 this repository was specified and proved by a model working from a package's
 source and its tests, with a human setting the direction, reviewing the result,
-and pushing back on weak specifications. The lessons from that review loop are
+and pushing back on weak or **non-idiomatic** specifications. The lessons from that review loop are
 fed back into the [skills](#skills) below, so that the next package needs less
 correction than the last.
 
@@ -35,14 +35,11 @@ handful of transformations that are permitted at all are spelled out under
 
 Each verified package ships a report next to the code that states, in prose,
 what was proved, what was assumed, which changes were made to the Go source, and
-what defeated the tool. Those reports are the honest record — the table above is
-a summary of them, not a replacement.
+what defeated the tool.
 
 Verification is not cheap: `container/list` takes about five minutes on four
 cores, and `internal/bytealg` between six and thirteen minutes, almost all of it
 inside `IndexRabinKarpBytes`.
-
-Work on further packages happens on branches and lands here once it is reviewed.
 
 ## Gobra version
 
@@ -51,15 +48,8 @@ which verifies with the `ghcr.io/viperproject/gobra:latest` image. **No version
 is pinned today**: each run uses whatever Gobra build — and whatever bundled Z3 —
 that image currently ships.
 
-That is a known weakness rather than a choice. The proofs here are sensitive to
-the Z3 version bundled with Gobra: Z3 4.13.0 verifies every package in this
-repository with no proof or configuration changes, while Z3 ≥ 4.14 makes
-`container/list` diverge (the root cause is the legacy arithmetic solver that
-Silicon pins in `z3config.smt2`, which cannot be overridden from this
-repository). Pinning the toolchain, and getting the underlying issue fixed
-upstream, is open work.
-
-Running a package locally, against a Gobra build of your own:
+Running a package locally against a Gobra build of your own — here,
+`container/list`:
 
 ```sh
 java -jar gobra.jar --config <absolute-path-to-repo>/src/container/list

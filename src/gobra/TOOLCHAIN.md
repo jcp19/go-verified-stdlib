@@ -35,16 +35,18 @@ The break is between Z3 4.13.4 and 4.14.0.
 
 **Z3 4.13.0 verifies everything in this repository**, on the same Gobra build
 and with Silicon's shipped options — no proof changes and no configuration
-changes here:
+changes needed:
 
-| Package | Z3 4.13.0 | Z3 4.16.0 |
-|---|---|---|
-| `sort` | 0 errors, 8 s | 0 errors, 7 s |
-| `container/list` | 0 errors, 326 s | aborted: prover crash |
-| `internal/bytealg` | 0 errors, 1171 s | 1 error, 1163 s |
+| Package | Z3 4.13.0 | Z3 4.16.0, as this repo stood | Z3 4.16.0, now |
+|---|---|---|---|
+| `sort` | 0 errors, 8 s | 0 errors, 7 s | 0 errors, 7 s |
+| `container/list` | 0 errors, 326 s | aborted: prover crash | **0 errors, 122-204 s** |
+| `internal/bytealg` | 0 errors, 1171 s | 1 error, 1163 s | 1 error |
 
-`internal/bytealg` is the narrower of the two: it already fails on Z3 4.13.4,
-one patch release before `container/list` breaks.
+`container/list` has since been re-encoded to verify on Z3 4.16 as well; see
+`../container/list/VERIFICATION.md` for what changed and why. `internal/bytealg`
+has not, and is the narrower of the two: it already fails on Z3 4.13.4, one
+patch release before `container/list` used to break.
 
 On the whole package the divergence is not merely slow. `move` and `remove`
 grow a single Z3 process past 7.5 GB until the kernel kills it, and Silicon
@@ -59,6 +61,17 @@ Note that Silicon converts `--assertTimeout` into a `:rlimit` rather than a
 `:timeout` (`proverEnableTimeBounds` is `false` by default, and
 `z3ResourcesPerMillisecond` is 10000). An rlimit budget bounds *work*, not
 *memory*, which is why a runaway query is not cut off before it exhausts RAM.
+
+That conversion also overflows: `assertTimeout * z3ResourcesPerMillisecond` is
+computed in a signed 32-bit int, so any `assert_timeout` above roughly 214748 ms
+produces a negative rlimit and kills the run outright with
+
+```
+(error "line ... Expected values for parameter rlimit is an unsigned integer.
+        It was given argument '-1294967296'")
+```
+
+which caps the option at about three and a half minutes.
 
 Members that do not diverge outright instead spend long enough on individual
 queries to exhaust their assert budget, and the resulting `unknown` surfaces as

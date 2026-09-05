@@ -10,3 +10,6 @@ resolved against this directory in addition to the module root (`../`).
 
 Nothing here is compiled by the Go toolchain; `.gobra` files are only read by
 Gobra.
+
+`TOOLCHAIN.md` records which Gobra and Z3 versions the verified packages need,
+and how to reproduce a verification run locally.

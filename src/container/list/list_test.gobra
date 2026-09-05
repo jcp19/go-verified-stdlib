@@ -167,6 +167,19 @@ func testListMoves(l *List, e1, e3, e4 *Element) {
 	l.MoveToBack(e3, l, 1) // move from middle
 	checkListPointers(l, []*Element{e1, e4, e3})
 
+	testListMovesRest(l, e1, e3, e4)
+}
+
+// testListMovesRest is the continuation of testListMoves. The split is the same
+// device TestList, TestExtending and TestMove already use: a single long
+// straight-line member accumulates too much proof context for the verifier, and
+// the cut costs nothing, since the state it hands over is exactly the state
+// testListInsert already requires.
+requires  l != nil && l.Mem()
+requires  l.Es() == seq[*Element]{e1, e4, e3}
+requires  l.Vs() == seq[any]{int(1), string("banana"), int(3)}
+decreases
+func testListMovesRest(l *List, e1, e3, e4 *Element) {
 	l.MoveToFront(e3, l, 2) // move from back
 	checkListPointers(l, []*Element{e3, e1, e4})
 	l.MoveToFront(e3, l, 0) // should be no-op

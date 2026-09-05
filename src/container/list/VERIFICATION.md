@@ -61,11 +61,31 @@ losing behaviour the package documents. `lemmas.gobra` provides
 
 ## Notable proof engineering
 
-- The linkage of consecutive elements is phrased as a two-variable
-  quantifier `forall i, k :: {l.es[i], l.es[k]} k == i+1 ==> ...` whose body
-  introduces **no new sequence-index terms**. An earlier formulation
-  (`es[i].next == es[i+1]` under trigger `{es[i]}`) let Z3 chain
-  instantiations along the sequence and made verification diverge.
+- Ownership is keyed by the **element set**, `forall p *Element :: {p.f} p elem
+  ElemSet(l.es) ==> acc(&p.f)`, one quantifier per field. Keying it by index
+  (`forall i :: acc(l.es[i])`) makes the receiver map change whenever `l.es` is
+  permuted, and re-deriving the footprint through `MoveSeq` is what made `move`
+  and `remove` diverge on Z3 4.16, far enough to grow a single Z3 process past
+  7.5 GB. Keyed by the set, a permutation leaves the permissions untouched and
+  the fold has nothing to re-derive.
+- The linkage of consecutive elements is stated once per direction and triggered
+  on the **field read**, `{l.es[i].next}` / `{l.es[i].prev}`. Three formulations
+  were measured. Triggering on `{l.es[i]}` lets Z3 chain instantiations along the
+  sequence, since the body names `l.es[i+1]`. A pair of indices guarded by
+  `k == i+1` avoids that, but is instantiated once per *pair* of `l.es[.]` terms,
+  and `Mem` pays that at every unfold. `{l.es[i], l.es[i+1]}` is linear but
+  **incomplete**: Z3 does not match modulo arithmetic, so the `(i-1, i)` fact
+  then needs a term shaped `es[(i-1)+1]`. The field read is linear, free of
+  arithmetic, and cannot re-trigger itself -- but only because ownership is keyed
+  by the set; under an index-keyed footprint the quantified-permission snapshot
+  maps materialise `l.es[i+1].next` and the same trigger loops.
+- Distinctness is carried as `len(ElemSet(l.es)) == len(l.es)`, which has **no
+  quantifier**, and `LemmaDistinct` unpacks it to the pairwise form at the six
+  sites that need it. Stating it pairwise inside `Mem` is a regression in its own
+  right: it took `testListMoves`' precondition inhale from 134 s to over 400 s.
+- `ElemSet` is `opaque`. It is recursive and appears in `Mem`, so leaving it
+  transparent makes every `Es()`/`Vs()`/`IsInit()` call unroll it; that alone
+  cost 565 s in `LemmaMoveSeqElemSet`.
 - A heap-dependent getter may be mentioned in a loop invariant, but the
   predicate has to be listed **first**: `invariant l.Mem()` before any
   `invariant ... l.Es() ...`. Silicon consumes invariant conjuncts left to
@@ -136,8 +156,11 @@ Every function of `list_test.go` is translated; `t.Errorf` calls become
 specifications statically. Deviations, all semantics-preserving:
 
 - `TestList`, `TestExtending` and `TestMove` are split into sequential
-  continuation functions (`testListMoves`, `testExtendingBack`, …) because a
-  single long straight-line member is too expensive for the verifier.
+  continuation functions (`testListMoves`, `testListMovesRest`,
+  `testExtendingBack`, …) because a single long straight-line member is too
+  expensive for the verifier. The cost is superlinear in the length of the
+  member, so the cut buys more than it looks: splitting `testListMoves` in two
+  took it from 233 s to 1.2 s plus 11.7 s.
 - Values later inspected with type assertions are written `int(1)` /
   `string("banana")`: Gobra does not apply Go's default-type rule when an
   untyped constant is boxed into `any`, so the dynamic type of a bare `1`
@@ -158,7 +181,9 @@ accepts that spelling, so the file passes both tools.
 java -jar gobra.jar --config <repo>/src/container/list
 ```
 
-(Requires Z3 on `Z3_EXE`.) The whole package verifies in about five minutes on
-4 cores. The most expensive members are the two `Push*List` loops, `move`, and
-the `testListInsert`/`testListInsertAfter` chains, whose proofs cross-case over
-element positions.
+(Requires Z3 on `Z3_EXE`.) The whole package verifies in two to three and a half
+minutes on 4 cores with Z3 4.16.0: 0 errors over 62 members. The most expensive
+members are `testExtendingSelf`, `TestMove` and `LemmaMoveSeqElemSet`.
+
+See `../../gobra/TOOLCHAIN.md` for this package's sensitivity to the Z3 version
+and for how to reproduce a run locally.

@@ -199,15 +199,19 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 		// hash-mismatch path.
 		//@ lemmaRKHashRangeRoll(seq(s), n, i)
 		i++
-		// (Gobra) lo names i-n so the trigger below contains no arithmetic:
-		// Viper rejects {&s[i-n:i][k]} because ssliceFromSlice(s, i-n, i) has
-		// an interpreted subtraction in it, but {&s[lo:i][k]} is a legal
-		// pattern.
-		//@ ghost lo := i - n
+		// (Gobra) lo names i-n so that neither the trigger below nor the reslice
+		// in the test contains arithmetic: Viper rejects {&s[i-n:i][k]} because
+		// ssliceFromSlice(s, i-n, i) has an interpreted subtraction in it, but
+		// {&s[lo:i][k]} is a legal pattern. It is an ordinary local rather than
+		// a ghost one so that Equal can reslice with it too -- s[i-n:i] is a
+		// different term from s[lo:i], relatable only through lo == i-n, and
+		// proving the address mapping for one and using the other is what made
+		// this loop body cost minutes.
+		lo := i - n
 		//@ assert forall k int :: {&s[lo:i][k]} {seq(s)[lo+k]} 0 <= k && k < n ==> &s[lo:i][k] == &s[lo+k]
-		if h == hashsep && Equal(s[i-n:i], sep) {
+		if h == hashsep && Equal(s[lo:i], sep) {
 			//@ lemmaMatchesAtWindow(s, seq(sep), lo, i, p/4)
-			return i - n
+			return lo
 		}
 		//@ lemmaNoMatchExtendWindow(s, seq(sep), lo, i, h, p/4)
 	}

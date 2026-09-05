@@ -37,9 +37,6 @@ Each verified package ships a report next to the code that states, in prose,
 what was proved, what was assumed, which changes were made to the Go source, and
 what defeated the tool.
 
-Verification is not cheap: `container/list` takes about five minutes on four
-cores, and `internal/bytealg` between six and thirteen minutes, almost all of it
-inside `IndexRabinKarpBytes`.
 
 ## Gobra version
 
@@ -55,7 +52,6 @@ Running a package locally against a Gobra build of your own — here,
 java -jar gobra.jar --config <absolute-path-to-repo>/src/container/list
 ```
 
-`--config` needs an absolute path, and Z3 has to be reachable through `Z3_EXE`.
 
 ## Project outline
 
@@ -94,9 +90,7 @@ the conventions the whole project follows:
 
 One further rule holds across every package: **tests are the yardstick for the
 specifications.** A package's unit tests are translated into `.gobra` clients
-whose assertions must be *proved*, not run. A test that no longer type-checks
-says the precondition is too strong; an assertion that cannot be proved says the
-postcondition is too weak. No `assume` is ever added to make a test go through.
+whose assertions must be *proved*, not run. No `assume` is added to make a test go through.
 
 ## How the Go code may be changed
 
@@ -175,12 +169,12 @@ session.
 This work targets the `go1.18` release branch because **Gobra does not support
 generics yet**. Go 1.18 is the release that introduced them, so it is the last
 point at which the standard library is still generics-free in practice: the
-packages of interest here — `sort`, `container/list`, `internal/bytealg` — are
+packages of interest here are
 written against interfaces and concrete types, and can be specified with the
 constructs Gobra has today.
 
 That is a temporary position, not a design decision. Verifying anything from a
-current Go release means Gobra must first learn about type parameters, and the
+current Go release means Gobra must be extended to support type parameters, and the
 specification language must gain a way to talk about them (contracts over
 constrained type parameters, and instantiation of predicates and ghost
 functions). Figuring out how to move this project past Go 1.18 is future work.

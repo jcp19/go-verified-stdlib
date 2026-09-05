@@ -20,7 +20,10 @@ correction than the last.
 
 The tree is a fork of [golang/go](https://github.com/golang/go) at
 `go1.18.10`; everything outside the verified packages is upstream Go, unchanged
-and under its original BSD-style [license](LICENSE).
+and under its original BSD-style [license](LICENSE). The verified packages are
+upstream Go too — what a proof adds is annotations, not a rewrite, and the
+handful of transformations that are permitted at all are spelled out under
+[how the Go code may be changed](#how-the-go-code-may-be-changed).
 
 ## Status
 
@@ -99,19 +102,66 @@ the conventions the whole project follows:
 - **`require_triggers`** — every quantifier must carry an explicit trigger.
   Trigger discipline is the single biggest lever on whether a proof terminates.
 
-Two rules hold across every package:
+One further rule holds across every package: **tests are the yardstick for the
+specifications.** A package's unit tests are translated into `.gobra` clients
+whose assertions must be *proved*, not run. A test that no longer type-checks
+says the precondition is too strong; an assertion that cannot be proved says the
+postcondition is too weak. No `assume` is ever added to make a test go through.
 
-1. **The Go implementation is not rewritten to suit the verifier.** Only
-   semantics-preserving transformations are allowed — renaming variables that
-   clash with Gobra keywords, naming result parameters, and introducing locals so
-   that proof annotations can be placed between a read and its use. `go build`,
-   `go vet` and `go test` still pass on every transformed package, and each
-   report lists the transformations line by line.
-2. **Tests are the yardstick for the specifications.** A package's unit tests are
-   translated into `.gobra` clients whose assertions must be *proved*, not run.
-   A test that no longer type-checks says the precondition is too strong; an
-   assertion that cannot be proved says the postcondition is too weak. No
-   `assume` is ever added to make a test go through.
+## How the Go code may be changed
+
+**It is still the original implementation.** Verifying an algorithm you have
+quietly rewritten proves nothing about the standard library, so the rule here is
+that the Go source is *not* adapted to suit the verifier. The algorithm, the
+control flow, the data structures and the observable behaviour of every verified
+package are upstream Go's, unchanged.
+
+What is added is proof, and proof is invisible to the Go toolchain. Contracts,
+loop invariants, ghost fields, ghost parameters, lemma calls and proof asserts
+all live inside `//@` line comments and `/*@ … @*/` blocks, which the Go
+compiler sees as comments and Gobra sees as code. So a method that reads
+
+```go
+// @ preserves l.Mem()
+// @ ensures   l.Es() == old(l.Es()) ++ seq[*Element]{ret}
+func (l *List) PushBack(v any) (ret *Element)
+```
+
+still compiles as the upstream `func (l *List) PushBack(v any) *Element` — even
+the ghost parameters that some methods take are written inside a comment block,
+so the compiled package's API is byte-for-byte the one Go ships.
+
+Beyond annotations, only these transformations are permitted, and each is
+semantics-preserving:
+
+| Transformation | Why it is needed | Example |
+| --- | --- | --- |
+| **Rename an identifier that clashes with a Gobra keyword** | `len`, `old`, `new`, `atomic`, `pred` and friends are keywords in the specification language and cannot name a variable or field. | `container/list`'s private field `len` → `length` |
+| **Name result parameters** | A postcondition has to be able to refer to what the function returns. | `func ... (uint32, uint32)` → `func ... (rhash, rpow uint32)` |
+| **Introduce a local for an intermediate result** | Ghost code and proof annotations can only be placed *between* statements, so a value that a proof step has to name must first be bound to a name. | `return l.root.next` → `res := l.root.next; return res` |
+| **Use an indexed `for` loop instead of `range`** | `range` is not well supported by Gobra today. | (none of the currently verified packages needed it) |
+| **Move a declaration Gobra cannot parse into a separate file** | Kept verbatim, in the same package, so the build output is identical. | `internal/bytealg`'s `unsafe.Offsetof` constants → `offsets.go` |
+
+Everything else is off limits. In particular: no loop is restructured, no bound
+is tightened, no case is dropped because it is hard to prove, and no behaviour
+is weakened to fit a specification. Where the
+verifier could not be satisfied, the report says so — as a limitation, a trusted
+assumption, or a stub — rather than the code being bent to make the failure go
+away.
+
+Three checks keep this honest, and each package's report records them:
+
+- **`go build`, `go vet` and `go test` still pass** on the transformed package,
+  against the package's real, untranslated test suite.
+- **The files stay `gofmt`-clean.** gofmt rewrites `//@` to `// @` and Gobra
+  accepts both spellings, so the annotated sources pass both tools.
+- **Stripping the annotations recovers upstream.** The remaining diff against
+  `go1.18.10` is exactly the table above — renames, named results and
+  intermediate locals — and each report lists it line by line, so a reviewer can
+  confirm that what was verified is what Go ships.
+
+Plain (non-annotation) comments added during verification are prefixed
+`(Gobra)`, so upstream's comments stay distinguishable from ours.
 
 ## Skills
 

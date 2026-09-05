@@ -71,6 +71,41 @@ The byte-slice functions additionally take a ghost fractional permission
 parameter `p` and preserve `acc(sep, p)` (and `acc(s, p)`), following the
 usual Gobra convention for read-only slice arguments.
 
+## Z3 version sensitivity
+
+`IndexRabinKarpBytes` is by far the most expensive member here: about 20 minutes
+of a ~20 minute package run. That leaves it no margin, and on Z3 >= 4.14 it no
+longer fits its `assert_timeout`. The symptom is a verification error, but it is
+a budget symptom rather than a hole in the proof: which obligation falls over
+moves with the Z3 build and with the budget --
+
+| Configuration | reported failure |
+|---|---|
+| Z3 4.8.7 / 4.13.0, `assert_timeout` 30000 | none |
+| Z3 4.13.4, 30000 | `bytealg.go:155` postcondition `res != -1 ==> MatchesAt(...)` |
+| Z3 4.16.0, 30000 | precondition of `lemmaNoMatchExtendWindow` |
+| Z3 4.16.0, 90000 | loop invariant `h == RKHashRange(seq(s), i-n, i)` |
+| Z3 4.16.0, 200000 | none reported; runs past 40 min without finishing |
+
+Raising `assert_timeout` therefore does not fix it -- it moves the failure and
+triples the runtime -- and neither does a finer `chop`, because the chopper
+splits *across* members while this member needs all of its lemmas regardless.
+
+An `assume false` walk-down of the main loop body, at `assert_timeout` 30000,
+puts the cost here:
+
+| region | cumulative |
+|---|---|
+| loop body vacuous | 62 s |
+| + the hash-roll arithmetic | 137 s |
+| + `lemmaRKHashRangeRoll` | 59 s |
+| + the address-mapping assert | 195 s |
+| + the `Equal` test and `lemmaMatchesAtWindow` | 940 s |
+
+so the window test dominates, and the address mapping is second. Extracting the
+address mapping into a lemma does cut the member (1195 s -> 760 s in a sliced
+context) but loses a fact the inline assert supplies, so it is not a drop-in.
+
 ## Trusted assumptions
 
 An honest inventory of everything assumed rather than proved

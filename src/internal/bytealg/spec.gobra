@@ -36,6 +36,8 @@
 
 package bytealg
 
+import "arith"
+
 // RKHashRange is the Rabin-Karp hash of the byte range q[lo:hi]:
 //   q[lo]*PrimeRK^(hi-lo-1) + ... + q[hi-2]*PrimeRK + q[hi-1]
 ghost
@@ -92,9 +94,9 @@ pure func RKHashStrRev(s string, lo, hi int) uint32 {
 // PowRK is b to the power of e.
 ghost
 requires  0 <= e
-decreases e
+decreases
 pure func PowRK(b uint32, e int) uint32 {
-	return e == 0 ? uint32(1) : PowRK(b, e-1) * b
+	return arith.Pow(b, e)
 }
 
 // MatchesAtRange states that the first k bytes of pat occur in q at position

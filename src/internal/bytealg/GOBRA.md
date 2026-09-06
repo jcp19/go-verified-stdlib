@@ -91,6 +91,65 @@ Raising `assert_timeout` therefore does not fix it -- it moves the failure and
 triples the runtime -- and neither does a finer `chop`, because the chopper
 splits *across* members while this member needs all of its lemmas regardless.
 
+It is also **not deterministic**. Four runs of the identical tree and config
+(Z3 4.16.0, `chop` 5, `assert_timeout` 30000) reported two different failures:
+
+| run | time | reported failure |
+|---|---|---|
+| 1 | 1163 s | `bytealg.go:212`, precondition of `lemmaNoMatchExtendWindow` |
+| 2 | 912 s | `bytealg.go:155`, postcondition `res != -1 ==> NoMatchBefore(...)` |
+| 3 | 889 s | `bytealg.go:155` |
+| 4 | 1014 s | `bytealg.go:212` |
+
+Silicon's state-saturation timeouts are wall-clock, so on a loaded machine the
+outcome moves. Two consequences: a single green run would not be evidence that a
+change works, and even a change that usually passed would make CI flaky.
+
+### What has been tried without touching the implementation
+
+| Approach | Result |
+|---|---|
+| `chop` 5 -> 12 | no change; the chopper splits across members |
+| `assert_timeout` 90000 | fails elsewhere after 36 min |
+| `assert_timeout` 200000 | no failure reported; runs past 40 min |
+| `#backend[exhaleMode(0)]` on the member | fails, 1273 s |
+| `#backend[moreJoins(all)]` on the member | fails, 1294 s |
+| `#backend[proverConfigArgs(smt.arith.solver=6)]` | **blocked by a Gobra bug**, below |
+| extracting the address mapping into a lemma | fails, 1099 s, and loses the `res != -1 ==> NoMatchBefore(...)` postcondition |
+
+Not yet tried: making the seven recursive spec functions `opaque`. It is the one
+remaining annotation-only lever with a precedent -- `ElemSet` cost 565 s in
+`container/list` until it was made opaque -- but it means threading `reveal`
+through 19 lemmas, and the non-determinism above makes the result hard to
+validate.
+
+### The per-member prover option, and why it does not work yet
+
+The promising lever is per-member solver selection. `smt.arith.solver=6` fixes
+`container/list` and breaks `bytealg` -- but it breaks it in `HashStrBytes` and
+`HashStrRevBytes`, whose loop invariants are nonlinear, *not* in
+`IndexRabinKarpBytes`, which is the slow one. Setting the solver per member
+would give each the arithmetic it wants.
+
+Gobra has the syntax for it, `#backend[proverConfigArgs(...)]`, and Silicon
+reads the annotation. But `visitSingleBackendAnnotation` in
+`ParseTreeTranslator.scala` builds the value with
+`visit(ctx.backendAnnotationEntry).toString`, and the grammar rule
+`backendAnnotationEntry: ~('('|')'|',')+` matches a *sequence* of tokens, so a
+value that is not a single token is stringified as a Scala collection. The
+emitted Viper is
+
+```
+@proverConfigArgs("Vector(smt, ., arith, ., solver, =, 6)")
+```
+
+and quoting does not help -- `proverConfigArgs("smt.arith.solver=6")` emits
+`@proverConfigArgs(""smt.arith.solver=6"")`, whose `=` split yields an option
+name with a leading quote. Single-token values are unaffected, which is why
+`exhaleMode(0)` and `moreJoins(all)` emit correctly. Fixing that stringification
+upstream would make per-member solver selection usable, and is the most
+promising route left for this package.
+
 An `assume false` walk-down of the main loop body, at `assert_timeout` 30000,
 puts the cost here:
 

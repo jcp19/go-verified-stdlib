@@ -142,8 +142,19 @@ measured it failed at three different places —
 | 4.16.0, solver 6 | `bytealg.go:46` and `:108` loop invariants (nonlinear) |
 
 — which is the signature of a member sitting on its budget rather than of a
-proof that is actually wrong. Raising its `assert_timeout` is therefore worth
-trying before any proof change, should this package need to move to a newer Z3.
+proof that is actually wrong.
+
+Raising `assert_timeout` does not fix it, though, and neither does anything else
+reachable from configuration or annotations; `../internal/bytealg/GOBRA.md`
+records the sweep, including that four identical runs report two different
+failures, so the package is unstable rather than merely slow.
+
+The one promising route left is per-member solver selection: `smt.arith.solver=6`
+breaks `bytealg` in `HashStrBytes`/`HashStrRevBytes`, whose invariants are
+nonlinear, but not in `IndexRabinKarpBytes`, which is the slow member. Gobra has
+the syntax (`#backend[proverConfigArgs(...)]`) and Silicon reads it, but Gobra
+stringifies multi-token annotation values as a Scala collection, so the option
+never arrives intact. That is a small upstream fix with a large payoff here.
 
 ## Reproducing locally
 

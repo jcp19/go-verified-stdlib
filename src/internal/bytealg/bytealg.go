@@ -37,22 +37,30 @@ func HashStrBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 	//@ decreases len(sep) - i
 	for i := 0; i < len(sep); i++ {
 		//@ assert seq(sep)[i] == sep[i]
+		//@ lemmaRKHashRangeStep(seq(sep), 0, i+1)
 		hash = hash*PrimeRK + uint32(sep[i])
 	}
 	var pow, sq uint32 = 1, PrimeRK
+	//@ lemmaPowRKMulStart(PrimeRK, len(sep))
 	//@ invariant acc(sep, p/2)
 	//@ invariant 0 <= i
 	//@ invariant hash == RKHashRange(seq(sep), 0, len(sep))
-	//@ invariant pow*PowRK(sq, i) == PowRK(PrimeRK, len(sep))
+	//@ invariant PowRKMul(pow, sq, i) == PowRK(PrimeRK, len(sep))
 	//@ decreases i
 	for i := len(sep); i > 0; i >>= 1 {
 		//@ lemmaBitFacts(i)
-		//@ ghost if i&1 != 0 { lemmaPowRKOdd(sq, i/2) } else { lemmaPowRKEven(sq, i/2) }
+		// (Gobra) sq0 and pow0 snapshot the pre-step values so that the step
+		// lemma below can be applied after the assignments, in the loop's own
+		// post-state terms; see lemmaPowRKMulStep.
+		//@ ghost sq0 := sq
+		//@ ghost pow0 := pow
 		if i&1 != 0 {
 			pow *= sq
 		}
 		sq *= sq
+		//@ lemmaPowRKMulStep(pow0, pow, sq0, sq, i, i>>1)
 	}
+	//@ lemmaPowRKMulEnd(pow, sq)
 	return hash, pow
 }
 
@@ -67,20 +75,28 @@ func HashStr(sep string) (rhash, rpow uint32) {
 	//@ invariant hash == RKHashStr(sep, 0, i)
 	//@ decreases len(sep) - i
 	for i := 0; i < len(sep); i++ {
+		//@ lemmaRKHashStrStep(sep, 0, i+1)
 		hash = hash*PrimeRK + uint32(sep[i])
 	}
 	var pow, sq uint32 = 1, PrimeRK
+	//@ lemmaPowRKMulStart(PrimeRK, len(sep))
 	//@ invariant 0 <= i
-	//@ invariant pow*PowRK(sq, i) == PowRK(PrimeRK, len(sep))
+	//@ invariant PowRKMul(pow, sq, i) == PowRK(PrimeRK, len(sep))
 	//@ decreases i
 	for i := len(sep); i > 0; i >>= 1 {
 		//@ lemmaBitFacts(i)
-		//@ ghost if i&1 != 0 { lemmaPowRKOdd(sq, i/2) } else { lemmaPowRKEven(sq, i/2) }
+		// (Gobra) sq0 and pow0 snapshot the pre-step values so that the step
+		// lemma below can be applied after the assignments, in the loop's own
+		// post-state terms; see lemmaPowRKMulStep.
+		//@ ghost sq0 := sq
+		//@ ghost pow0 := pow
 		if i&1 != 0 {
 			pow *= sq
 		}
 		sq *= sq
+		//@ lemmaPowRKMulStep(pow0, pow, sq0, sq, i, i>>1)
 	}
+	//@ lemmaPowRKMulEnd(pow, sq)
 	return hash, pow
 }
 
@@ -99,22 +115,30 @@ func HashStrRevBytes(sep []byte /*@ , ghost p perm @*/) (rhash, rpow uint32) {
 	//@ decreases i + 1
 	for i := len(sep) - 1; i >= 0; i-- {
 		//@ assert seq(sep)[i] == sep[i]
+		//@ lemmaRKHashRevRangeStep(seq(sep), i, len(sep))
 		hash = hash*PrimeRK + uint32(sep[i])
 	}
 	var pow, sq uint32 = 1, PrimeRK
+	//@ lemmaPowRKMulStart(PrimeRK, len(sep))
 	//@ invariant acc(sep, p/2)
 	//@ invariant 0 <= i
 	//@ invariant hash == RKHashRevRange(seq(sep), 0, len(sep))
-	//@ invariant pow*PowRK(sq, i) == PowRK(PrimeRK, len(sep))
+	//@ invariant PowRKMul(pow, sq, i) == PowRK(PrimeRK, len(sep))
 	//@ decreases i
 	for i := len(sep); i > 0; i >>= 1 {
 		//@ lemmaBitFacts(i)
-		//@ ghost if i&1 != 0 { lemmaPowRKOdd(sq, i/2) } else { lemmaPowRKEven(sq, i/2) }
+		// (Gobra) sq0 and pow0 snapshot the pre-step values so that the step
+		// lemma below can be applied after the assignments, in the loop's own
+		// post-state terms; see lemmaPowRKMulStep.
+		//@ ghost sq0 := sq
+		//@ ghost pow0 := pow
 		if i&1 != 0 {
 			pow *= sq
 		}
 		sq *= sq
+		//@ lemmaPowRKMulStep(pow0, pow, sq0, sq, i, i>>1)
 	}
+	//@ lemmaPowRKMulEnd(pow, sq)
 	return hash, pow
 }
 
@@ -129,20 +153,28 @@ func HashStrRev(sep string) (rhash, rpow uint32) {
 	//@ invariant hash == RKHashStrRev(sep, i+1, len(sep))
 	//@ decreases i + 1
 	for i := len(sep) - 1; i >= 0; i-- {
+		//@ lemmaRKHashStrRevStep(sep, i, len(sep))
 		hash = hash*PrimeRK + uint32(sep[i])
 	}
 	var pow, sq uint32 = 1, PrimeRK
+	//@ lemmaPowRKMulStart(PrimeRK, len(sep))
 	//@ invariant 0 <= i
-	//@ invariant pow*PowRK(sq, i) == PowRK(PrimeRK, len(sep))
+	//@ invariant PowRKMul(pow, sq, i) == PowRK(PrimeRK, len(sep))
 	//@ decreases i
 	for i := len(sep); i > 0; i >>= 1 {
 		//@ lemmaBitFacts(i)
-		//@ ghost if i&1 != 0 { lemmaPowRKOdd(sq, i/2) } else { lemmaPowRKEven(sq, i/2) }
+		// (Gobra) sq0 and pow0 snapshot the pre-step values so that the step
+		// lemma below can be applied after the assignments, in the loop's own
+		// post-state terms; see lemmaPowRKMulStep.
+		//@ ghost sq0 := sq
+		//@ ghost pow0 := pow
 		if i&1 != 0 {
 			pow *= sq
 		}
 		sq *= sq
+		//@ lemmaPowRKMulStep(pow0, pow, sq0, sq, i, i>>1)
 	}
+	//@ lemmaPowRKMulEnd(pow, sq)
 	return hash, pow
 }
 
@@ -169,6 +201,7 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	//@ invariant h == RKHashRange(seq(s), 0, i)
 	//@ decreases n - i
 	for i := 0; i < n; i++ {
+		//@ lemmaRKHashRangeStep(seq(s), 0, i+1)
 		h = h*PrimeRK + uint32(s[i])
 	}
 	// (Gobra) The second trigger is what carries this fact into the window
@@ -193,6 +226,10 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 		h += uint32(s[i])
 		h -= pow * uint32(s[i-n])
 		//@ assert seq(s)[i-n] == s[i-n] && seq(s)[i] == s[i]
+		// (Gobra) Under --disableNL the solver will not replace equals by
+		// equals under a product, so knowing pow == PowRK(PrimeRK, n) is not
+		// enough to read the subtraction above as the roll lemma states it.
+		//@ lemmaMulSubstFirst(pow, PowRK(PrimeRK, n), uint32(s[i-n]))
 		// (Gobra) The roll step is proved before the test rather than at the end
 		// of the body, so that the test already knows h to be the hash of the
 		// window it is about to compare -- which is what refutes a match on the
@@ -235,6 +272,7 @@ func IndexRabinKarp(s, substr string) (res int) {
 	//@ invariant h == RKHashStr(s, 0, i)
 	//@ decreases n - i
 	for i := 0; i < n; i++ {
+		//@ lemmaRKHashStrStep(s, 0, i+1)
 		h = h*PrimeRK + uint32(s[i])
 	}
 	if h == hashss && s[:n] == substr {
@@ -247,10 +285,13 @@ func IndexRabinKarp(s, substr string) (res int) {
 	//@ invariant forall j int :: {StrMatchesAt(s, substr, j)} 0 <= j && j <= i-n ==> !StrMatchesAt(s, substr, j)
 	//@ decreases len(s) - i
 	for i := n; i < len(s); {
-		//@ ghost if 0 < n { lemmaRKHashStrDropFirst(s, i-n, i) }
 		h *= PrimeRK
 		h += uint32(s[i])
 		h -= pow * uint32(s[i-n])
+		//@ ghost if 0 < n {
+		//@ 	lemmaMulSubstFirst(pow, PowRK(PrimeRK, n), uint32(s[i-n]))
+		//@ 	lemmaRKHashStrRoll(s, n, i)
+		//@ }
 		i++
 		//@ assert h == RKHashStr(s, i-n, i)
 		if h == hashss && s[i-n:i] == substr {

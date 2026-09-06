@@ -24,6 +24,7 @@ decreases k
 func lemmaMatchesAtRangeFromPointwise(q, pat seq[byte], j, k int) {
 	if k > 0 {
 		lemmaMatchesAtRangeFromPointwise(q, pat, j, k-1)
+		assert reveal MatchesAtRange(q, pat, j, k)
 	}
 }
 
@@ -36,6 +37,7 @@ ensures   forall m int :: {pat[m]} 0 <= m && m < k ==> q[j+m] == pat[m]
 decreases k
 func lemmaMatchesAtRangePointwise(q, pat seq[byte], j, k int) {
 	if k > 0 {
+		assert reveal MatchesAtRange(q, pat, j, k)
 		lemmaMatchesAtRangePointwise(q, pat, j, k-1)
 	}
 }
@@ -63,30 +65,141 @@ func LemmaNoMatchBeforePointwise(q, pat seq[byte], hi int) {
 	}
 }
 
-// lemmaMulComm3 is a commutativity helper for products of three factors.
-// Proving this rearrangement inline in a context with many quantified facts
-// makes Z3 struggle; as an isolated lemma it is immediate.
-ghost
-ensures   x*y*z == x*z*y
-decreases
-func lemmaMulComm3(x, y, z uint32) { arith.MulComm3(x, y, z) }
+// This package is verified with --disableNL (see ../../gobra/arith), so the
+// solver does nothing with a product of two non-constants -- not even replace
+// equals by equals under it. Every non-linear step below is therefore an
+// explicit appeal to package arith, and every one of these wrappers has the
+// same two-part shape: instantiate the arith lemma, then bridge between
+// arith.Pow and PowRK, which are equal by PowRK's definition but are distinct
+// monomials to the arithmetic solver.
+//
+// Products by PrimeRK need no such care: PrimeRK is a numeral, so scaling by
+// it stays linear.
 
-// lemmaPowRKEven: b^(2k) == (b*b)^k.
+// lemmaMulSubstFirst is congruence for a product, which is not free under
+// --disableNL: a caller that knows pow == PowRK(PrimeRK, n) still has to ask
+// for pow*x == PowRK(PrimeRK, n)*x.
 ghost
-requires  0 <= k
-ensures   PowRK(b, 2*k) == PowRK(b*b, k)
-decreases k
-func lemmaPowRKEven(b uint32, k int) { arith.PowEven(b, k) }
-
-// lemmaPowRKOdd: b^(2k+1) == (b*b)^k * b.
-ghost
-requires  0 <= k
-ensures   PowRK(b, 2*k+1) == PowRK(b*b, k)*b
+requires  x == y
+ensures   x*z == y*z
 decreases
-func lemmaPowRKOdd(b uint32, k int) {
-	arith.PowOdd(b, k)
-	assert PowRK(b, 2*k+1) == arith.Pow(b, 2*k+1)
-	assert PowRK(b*b, k) == arith.Pow(b*b, k)
+func lemmaMulSubstFirst(x, y, z uint32) { arith.MulSubstFirst(x, y, z) }
+
+// lemmaPowRKOneMul: PrimeRK^0 * x == x. The empty-range base case of the
+// DropFirst lemmas below bottoms out in this.
+//
+// The exponent is a parameter constrained to be zero rather than the literal
+// 0, and lemmaPowRKMulStep below names both e and e+1, so that instantiating
+// them produces the caller's own product terms. Under --disableNL a product
+// is opaque, and a conclusion about PrimeRK^0 * x is of no use to a caller
+// holding PrimeRK^(hi-lo-1) * x even though the exponents are equal.
+ghost
+requires  e == 0
+ensures   PowRK(PrimeRK, e)*x == x
+decreases
+func lemmaPowRKOneMul(x uint32, e int) {
+	arith.MulOneAt(PowRK(PrimeRK, e), PrimeRK, x)
+}
+
+// lemmaPowRKHornerStep is one step of Horner's rule with the weight of the
+// leading term moved up one power: given h, the hash of a range, and r, the
+// hash of that range without its leading byte x, it gives the hash of the
+// range extended by one byte y, with x's weight raised from PrimeRK^e to
+// PrimeRK^f. It is the single non-linear step of the whole Rabin-Karp
+// development, and the shape both DropFirst lemmas and both roll lemmas need.
+//
+// Every operand is a parameter, so instantiating it yields the caller's own
+// terms and leaves nothing to rearrange; see arith.PowHornerStep for why that
+// matters under --disableNL.
+ghost
+requires  0 <= e && f == e+1
+requires  h == PowRK(PrimeRK, e)*x + r
+ensures   h*PrimeRK + y == PowRK(PrimeRK, f)*x + (r*PrimeRK + y)
+decreases
+func lemmaPowRKHornerStep(x, r, y, h uint32, e, f int) {
+	arith.PowHornerStep(PowRK(PrimeRK, e), PowRK(PrimeRK, f), PrimeRK, x, r, y, h, e)
+}
+
+// The three lemmas below are the exponentiation-by-squaring loops of
+// bytealg.go, which compute PrimeRK^len(sep) by halving the exponent while
+// squaring the base. Their invariant is PowRKMul(pow, sq, i), not the product
+// pow*PowRK(sq, i) the code computes: under --disableNL the solver does no
+// congruence reasoning under a product at all, so an invariant written as a
+// product cannot be carried across the loop's own assignments to pow and sq.
+// As one function application it is an ordinary term and the step is plain
+// congruence. See arith.MulPow.
+
+// lemmaPowRKMulStart: at the start pow is 1 and the invariant is the target.
+ghost
+requires  0 <= e
+ensures   PowRKMul(1, b, e) == PowRK(b, e)
+decreases
+func lemmaPowRKMulStart(b uint32, e int) { arith.MulPowStart(b, e) }
+
+// lemmaPowRKMulEnd: at the end the exponent is zero and the invariant is pow.
+ghost
+ensures   PowRKMul(a, b, 0) == a
+decreases
+func lemmaPowRKMulEnd(a, b uint32) { arith.MulPowEnd(a, b) }
+
+// lemmaPowRKMulStep: one step -- halve the exponent, square the base, and fold
+// the odd bit into the factor.
+ghost
+requires  0 <= i && j == i/2 && bb == b*b
+requires  i%2 == 0 ==> a2 == a
+requires  i%2 != 0 ==> a2 == a*b
+ensures   PowRKMul(a, b, i) == PowRKMul(a2, bb, j)
+decreases
+func lemmaPowRKMulStep(a, a2, b, bb uint32, i, j int) {
+	arith.MulPowStep(a, a2, b, bb, i, j)
+}
+
+// The four hash abstractions are opaque (see spec.gobra): callers see their
+// contracts, not their bodies. Their base cases are exposed as postconditions,
+// but a proof that walks a range one byte at a time also needs the recursive
+// step, and `reveal` is only available where the definition is in scope. The
+// four lemmas below hand that single unfolding step to clients -- notably the
+// hashing loops of bytealg.go, whose bodies extend the range by one byte.
+//
+// Making these functions opaque is what makes this package tractable at all:
+// with their definitions visible, Z3 instantiates them all over the Rabin-Karp
+// proofs and the package takes about twenty minutes; behind `opaque` plus the
+// step lemmas below it takes seconds.
+
+// lemmaRKHashRangeStep unfolds RKHashRange once at its upper end.
+ghost
+requires  0 <= lo && lo < hi && hi <= len(q)
+ensures   RKHashRange(q, lo, hi) == RKHashRange(q, lo, hi-1)*PrimeRK + uint32(q[hi-1])
+decreases
+func lemmaRKHashRangeStep(q seq[byte], lo, hi int) {
+	assert reveal RKHashRange(q, lo, hi) == RKHashRange(q, lo, hi-1)*PrimeRK + uint32(q[hi-1])
+}
+
+// lemmaRKHashRevRangeStep unfolds RKHashRevRange once at its lower end.
+ghost
+requires  0 <= lo && lo < hi && hi <= len(q)
+ensures   RKHashRevRange(q, lo, hi) == RKHashRevRange(q, lo+1, hi)*PrimeRK + uint32(q[lo])
+decreases
+func lemmaRKHashRevRangeStep(q seq[byte], lo, hi int) {
+	assert reveal RKHashRevRange(q, lo, hi) == RKHashRevRange(q, lo+1, hi)*PrimeRK + uint32(q[lo])
+}
+
+// lemmaRKHashStrStep unfolds RKHashStr once at its upper end.
+ghost
+requires  0 <= lo && lo < hi && hi <= len(s)
+ensures   RKHashStr(s, lo, hi) == RKHashStr(s, lo, hi-1)*PrimeRK + uint32(s[hi-1])
+decreases
+func lemmaRKHashStrStep(s string, lo, hi int) {
+	assert reveal RKHashStr(s, lo, hi) == RKHashStr(s, lo, hi-1)*PrimeRK + uint32(s[hi-1])
+}
+
+// lemmaRKHashStrRevStep unfolds RKHashStrRev once at its lower end.
+ghost
+requires  0 <= lo && lo < hi && hi <= len(s)
+ensures   RKHashStrRev(s, lo, hi) == RKHashStrRev(s, lo+1, hi)*PrimeRK + uint32(s[lo])
+decreases
+func lemmaRKHashStrRevStep(s string, lo, hi int) {
+	assert reveal RKHashStrRev(s, lo, hi) == RKHashStrRev(s, lo+1, hi)*PrimeRK + uint32(s[lo])
 }
 
 // lemmaRKHashRangeDropFirst peels the first byte off a range hash:
@@ -96,14 +209,13 @@ requires  0 <= lo && lo < hi && hi <= len(q)
 ensures   RKHashRange(q, lo, hi) == PowRK(PrimeRK, hi-lo-1)*uint32(q[lo]) + RKHashRange(q, lo+1, hi)
 decreases hi - lo
 func lemmaRKHashRangeDropFirst(q seq[byte], lo, hi int) {
+	lemmaRKHashRangeStep(q, lo, hi)
 	if lo+1 == hi {
-		assert RKHashRange(q, lo, hi) == RKHashRange(q, lo, hi-1)*PrimeRK + uint32(q[hi-1])
+		lemmaPowRKOneMul(uint32(q[lo]), hi-lo-1)
 	} else {
 		lemmaRKHashRangeDropFirst(q, lo, hi-1)
-		assert RKHashRange(q, lo, hi) == RKHashRange(q, lo, hi-1)*PrimeRK + uint32(q[hi-1])
-		assert RKHashRange(q, lo+1, hi) == RKHashRange(q, lo+1, hi-1)*PrimeRK + uint32(q[hi-1])
-		assert PowRK(PrimeRK, hi-lo-1) == PowRK(PrimeRK, hi-lo-2)*PrimeRK
-		lemmaMulComm3(PowRK(PrimeRK, hi-lo-2), uint32(q[lo]), PrimeRK)
+		lemmaRKHashRangeStep(q, lo+1, hi)
+		lemmaPowRKHornerStep(uint32(q[lo]), RKHashRange(q, lo+1, hi-1), uint32(q[hi-1]), RKHashRange(q, lo, hi-1), hi-lo-2, hi-lo-1)
 	}
 }
 
@@ -117,9 +229,8 @@ ensures   RKHashRange(q, i-n+1, i+1) == RKHashRange(q, i-n, i)*PrimeRK + uint32(
 decreases
 func lemmaRKHashRangeRoll(q seq[byte], n, i int) {
 	lemmaRKHashRangeDropFirst(q, i-n, i)
-	assert RKHashRange(q, i-n+1, i+1) == RKHashRange(q, i-n+1, i)*PrimeRK + uint32(q[i])
-	assert PowRK(PrimeRK, n) == PowRK(PrimeRK, n-1)*PrimeRK
-	lemmaMulComm3(PowRK(PrimeRK, n-1), uint32(q[i-n]), PrimeRK)
+	lemmaRKHashRangeStep(q, i-n+1, i+1)
+	lemmaPowRKHornerStep(uint32(q[i-n]), RKHashRange(q, i-n+1, i), uint32(q[i]), RKHashRange(q, i-n, i), n-1, n)
 }
 
 // lemmaRKHashRangePointwise: ranges that agree pointwise hash equally.
@@ -131,8 +242,8 @@ decreases m
 func lemmaRKHashRangePointwise(q, pat seq[byte], j, m int) {
 	if m > 0 {
 		lemmaRKHashRangePointwise(q, pat, j, m-1)
-		assert RKHashRange(q, j, j+m) == RKHashRange(q, j, j+m-1)*PrimeRK + uint32(q[j+m-1])
-		assert RKHashRange(pat, 0, m) == RKHashRange(pat, 0, m-1)*PrimeRK + uint32(pat[m-1])
+		assert reveal RKHashRange(q, j, j+m) == RKHashRange(q, j, j+m-1)*PrimeRK + uint32(q[j+m-1])
+		assert reveal RKHashRange(pat, 0, m) == RKHashRange(pat, 0, m-1)*PrimeRK + uint32(pat[m-1])
 		assert q[j+m-1] == pat[m-1]
 	}
 }
@@ -320,13 +431,25 @@ requires  0 <= lo && lo < hi && hi <= len(s)
 ensures   RKHashStr(s, lo, hi) == PowRK(PrimeRK, hi-lo-1)*uint32(s[lo]) + RKHashStr(s, lo+1, hi)
 decreases hi - lo
 func lemmaRKHashStrDropFirst(s string, lo, hi int) {
+	lemmaRKHashStrStep(s, lo, hi)
 	if lo+1 == hi {
-		assert RKHashStr(s, lo, hi) == RKHashStr(s, lo, hi-1)*PrimeRK + uint32(s[hi-1])
+		lemmaPowRKOneMul(uint32(s[lo]), hi-lo-1)
 	} else {
 		lemmaRKHashStrDropFirst(s, lo, hi-1)
-		assert RKHashStr(s, lo, hi) == RKHashStr(s, lo, hi-1)*PrimeRK + uint32(s[hi-1])
-		assert RKHashStr(s, lo+1, hi) == RKHashStr(s, lo+1, hi-1)*PrimeRK + uint32(s[hi-1])
-		assert PowRK(PrimeRK, hi-lo-1) == PowRK(PrimeRK, hi-lo-2)*PrimeRK
+		lemmaRKHashStrStep(s, lo+1, hi)
+		lemmaPowRKHornerStep(uint32(s[lo]), RKHashStr(s, lo+1, hi-1), uint32(s[hi-1]), RKHashStr(s, lo, hi-1), hi-lo-2, hi-lo-1)
 	}
+}
+
+// lemmaRKHashStrRoll is the string counterpart of lemmaRKHashRangeRoll: the
+// rolling-hash update step over a range of a string.
+ghost
+requires  0 < n && n <= i && i < len(s)
+ensures   RKHashStr(s, i-n+1, i+1) == RKHashStr(s, i-n, i)*PrimeRK + uint32(s[i]) - PowRK(PrimeRK, n)*uint32(s[i-n])
+decreases
+func lemmaRKHashStrRoll(s string, n, i int) {
+	lemmaRKHashStrDropFirst(s, i-n, i)
+	lemmaRKHashStrStep(s, i-n+1, i+1)
+	lemmaPowRKHornerStep(uint32(s[i-n]), RKHashStr(s, i-n+1, i), uint32(s[i]), RKHashStr(s, i-n, i), n-1, n)
 }
 

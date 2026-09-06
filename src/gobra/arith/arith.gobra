@@ -103,31 +103,95 @@ func MulDistrib(x, y, z uint32) {}
 // The shapes below are the ones a Rabin-Karp style proof actually needs. Each
 // is a rearrangement its caller could do for itself with non-linear arithmetic
 // enabled, and cannot once it is disabled.
+//
+// They take the powers they talk about as ordinary values, constrained by a
+// precondition to be the powers in question, rather than writing Pow(b, e)
+// inside the conclusion. That is what makes them usable. A caller states its
+// own contracts in terms of its own abstraction -- internal/bytealg says
+// PowRK(PrimeRK, n), which is Pow(PrimeRK, n) by definition -- and with
+// non-linear arithmetic disabled the two are nevertheless distinct monomials
+// once they sit under a product: knowing Pow(b, e) == PowRK(b, e) does not
+// give the solver Pow(b, e)*x == PowRK(b, e)*x. Passing the caller's own term
+// as an argument sidesteps that entirely: the conclusion is then already
+// phrased in the caller's terms and needs no bridging back.
 
-// PowMulStep folds one factor of b into the exponent:
-//   b^e * x * b == b^(e+1) * x
+// MulOneAt: b^0 * x == x, for a caller holding b^0 as p0.
 ghost
-requires 0 <= e
-ensures  Pow(b, e)*x*b == Pow(b, e+1)*x
+requires p0 == Pow(b, 0)
+ensures  p0*x == x
 decreases
-func PowMulStep(b, x uint32, e int) {}
-
-// MulPowEven and MulPowOdd are the two cases of an exponentiation-by-squaring
-// loop that maintains a * b^e == the target power.
-ghost
-requires 0 <= k
-ensures  a*Pow(b, 2*k) == a*Pow(b*b, k)
-decreases
-func MulPowEven(a, b uint32, k int) {
-	PowEven(b, k)
+func MulOneAt(p0, b, x uint32) {
+	PowZero(b)
 }
 
+// PowHornerStep is one step of Horner's rule with the weight of the leading
+// term moved up one power. Given h == b^e * x + r,
+//   h * b + y == b^(e+1) * x + (r*b + y).
+// This is the whole non-linear content of a rolling-hash proof.
+//
+// Note that h, like the powers, is a parameter rather than a subexpression of
+// the conclusion. That is not cosmetic. Writing the conclusion over
+// (pe*x + r)*b + y instead leaves the caller to get from its own h*b + y to
+// that form, and with --disableNL it will not: each step of that rearrangement
+// is available to it on its own -- scaling h == pe*x + r by b, distributing b
+// over the sum -- and the chain still fails, because the solver gives up once
+// a proof needs several of them at once over the same non-linear monomial.
+// With h named, the conclusion is already the caller's own term and there is
+// no chain left to fail.
 ghost
-requires 0 <= k
-ensures  a*Pow(b, 2*k+1) == (a*b)*Pow(b*b, k)
+requires 0 <= e
+requires pe == Pow(b, e) && pf == Pow(b, e+1)
+requires h == pe*x + r
+ensures  h*b + y == pf*x + (r*b + y)
 decreases
-func MulPowOdd(a, b uint32, k int) {
-	PowOdd(b, k)
+func PowHornerStep(pe, pf, b, x, r, y, h uint32, e int) {
+	PowStep(b, e+1)
+}
+
+// MulPow is a * b^e as a single term.
+//
+// An exponentiation-by-squaring loop maintains exactly this quantity while it
+// reassigns both a and b, so a caller verified with --disableNL cannot state
+// the invariant as the product a*Pow(b, e): re-establishing it after the
+// assignments would mean substituting equals for equals under a product, and
+// the solver does not do that. Written as one function application it is an
+// ordinary uninterpreted term and the substitution is plain congruence.
+ghost
+requires 0 <= e
+decreases
+pure func MulPow(a, b uint32, e int) uint32 {
+	return a * Pow(b, e)
+}
+
+// MulPowStep is one step of exponentiation by squaring: halve the exponent,
+// square the base, and fold the odd bit into the factor.
+ghost
+requires 0 <= i && j == i/2 && bb == b*b
+requires i%2 == 0 ==> a2 == a
+requires i%2 != 0 ==> a2 == a*b
+ensures  MulPow(a, b, i) == MulPow(a2, bb, j)
+decreases
+func MulPowStep(a, a2, b, bb uint32, i, j int) {
+	if i%2 == 0 {
+		PowEven(b, j)
+	} else {
+		PowOdd(b, j)
+	}
+}
+
+// MulPowStart and MulPowEnd are the loop's two ends: it starts at a == 1 with
+// the full exponent, and finishes with the exponent down to zero.
+ghost
+requires 0 <= e
+ensures  MulPow(1, b, e) == Pow(b, e)
+decreases
+func MulPowStart(b uint32, e int) {}
+
+ghost
+ensures MulPow(a, b, 0) == a
+decreases
+func MulPowEnd(a, b uint32) {
+	PowZero(b)
 }
 
 // MulSubstFirst and MulSubstSecond are congruence for a product, as lemmas.

@@ -415,20 +415,33 @@ func lemmaMatchesAtWindow(s []byte, pat seq[byte], lo, hi int, p perm) {
 
 // lemmaNoMatchExtendWindowHash: the window's hash differs from the pattern's.
 // This is the path taken at all but a handful of positions.
+//
+// It takes the byte sequence rather than the slice, and carries no permission.
+// That is not a simplification, it is the single most valuable change in this
+// package's proof. As
+//
+//	requires acc(s, p) ... requires hash == RKHashRange(seq(s), lo, hi)
+//
+// this one precondition cost 343 s -- 68% of the member's entire prover time,
+// in five queries, four of them over the assert budget at 44-110 s each. The
+// reason is that the call first splits the quantified permission for s, and
+// seq(s) then has to be re-derived from a heap carrying pTaken masks, which is
+// a fresh snapshot map over the whole slice at every iteration. Taking a plain
+// seq[byte] evaluates seq(s) once, in the caller's own unmodified state, where
+// the loop invariant has already fixed it.
+//
+// The body never needed the slice: everything below it speaks in sequences.
 ghost
-requires  0 < p
-requires  acc(s, p)
-requires  0 <= lo && lo <= hi && hi <= len(s)
+requires  0 <= lo && lo <= hi && hi <= len(q)
 requires  len(pat) == hi-lo
-requires  hash == RKHashRange(seq(s), lo, hi)
-requires  NoMatchBefore(seq(s), pat, lo)
+requires  hash == RKHashRange(q, lo, hi)
+requires  NoMatchBefore(q, pat, lo)
 requires  hash != RKHashRange(pat, 0, hi-lo)
-ensures   acc(s, p)
-ensures   NoMatchBefore(seq(s), pat, lo+1)
+ensures   NoMatchBefore(q, pat, lo+1)
 decreases
-func lemmaNoMatchExtendWindowHash(s []byte, pat seq[byte], lo, hi int, hash uint32, p perm) {
-	lemmaMatchesAtFalseHashRange(seq(s), pat, lo, hi)
-	lemmaNoMatchBeforeExtend(seq(s), pat, lo)
+func lemmaNoMatchExtendWindowHash(q, pat seq[byte], lo, hi int, hash uint32) {
+	lemmaMatchesAtFalseHashRange(q, pat, lo, hi)
+	lemmaNoMatchBeforeExtend(q, pat, lo)
 }
 
 // lemmaNoMatchExtendWindowBytes: the hashes agree but the bytes do not, so the

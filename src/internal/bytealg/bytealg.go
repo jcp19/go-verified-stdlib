@@ -217,22 +217,33 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	// do; picking the disjunct here rather than passing a disjunction keeps
 	// the resliced window out of the hash path. See lemmas.gobra.
 	//@ ghost if h != hashsep {
-	//@ 	lemmaNoMatchExtendWindowHash(s, seq(sep), 0, n, h, p/4)
+	//@ 	lemmaNoMatchExtendWindowHash(seq(s), seq(sep), 0, n, h)
 	//@ } else {
 	//@ 	lemmaNoMatchExtendWindowBytes(s, seq(sep), 0, n, p/4)
 	//@ }
+	// (Gobra) qs and qsep pin the two byte sequences to ordinary ghost values
+	// for the duration of the loop. The Equal call in the body exhales and
+	// re-inhales a slice of s's quantified permission, and every mention of
+	// seq(s) after that point has to be re-derived from a heap carrying pTaken
+	// masks -- a fresh snapshot map over the whole slice. Stating the invariant
+	// and the lemma calls over qs instead leaves exactly one such obligation
+	// per iteration, the seq(s) == qs conjunct below, instead of one at every
+	// use.
+	//@ ghost qs := seq(s)
+	//@ ghost qsep := seq(sep)
 	//@ invariant 0 < n && n == len(sep)
 	//@ invariant n <= i && i <= len(s)
 	//@ invariant acc(s, p/2) && acc(sep, p/2)
-	//@ invariant hashsep == RKHashRange(seq(sep), 0, n) && pow == PowRK(PrimeRK, n)
-	//@ invariant h == RKHashRange(seq(s), i-n, i)
-	//@ invariant NoMatchBefore(seq(s), seq(sep), i-n+1)
+	//@ invariant seq(s) == qs && seq(sep) == qsep
+	//@ invariant hashsep == RKHashRange(qsep, 0, n) && pow == PowRK(PrimeRK, n)
+	//@ invariant h == RKHashRange(qs, i-n, i)
+	//@ invariant NoMatchBefore(qs, qsep, i-n+1)
 	//@ decreases len(s) - i
 	for i := n; i < len(s); {
 		h *= PrimeRK
 		h += uint32(s[i])
 		h -= pow * uint32(s[i-n])
-		//@ assert seq(s)[i-n] == s[i-n] && seq(s)[i] == s[i]
+		//@ assert qs[i-n] == s[i-n] && qs[i] == s[i]
 		// (Gobra) Under --disableNL the solver will not replace equals by
 		// equals under a product, so knowing pow == PowRK(PrimeRK, n) is not
 		// enough to read the subtraction above as the roll lemma states it.
@@ -241,7 +252,7 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 		// of the body, so that the test already knows h to be the hash of the
 		// window it is about to compare -- which is what refutes a match on the
 		// hash-mismatch path.
-		//@ lemmaRKHashRangeRoll(seq(s), n, i)
+		//@ lemmaRKHashRangeRoll(qs, n, i)
 		i++
 		// (Gobra) lo names i-n so the trigger below contains no arithmetic:
 		// Viper rejects {&s[i-n:i][k]} because ssliceFromSlice(s, i-n, i) has
@@ -254,7 +265,7 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 			return i - n
 		}
 		//@ ghost if h != hashsep {
-		//@ 	lemmaNoMatchExtendWindowHash(s, seq(sep), lo, i, h, p/4)
+		//@ 	lemmaNoMatchExtendWindowHash(qs, qsep, lo, i, h)
 		//@ } else {
 		//@ 	lemmaNoMatchExtendWindowBytes(s, seq(sep), lo, i, p/4)
 		//@ }

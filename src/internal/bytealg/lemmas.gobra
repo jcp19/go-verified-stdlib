@@ -393,12 +393,28 @@ func lemmaMatchesAtWindow(s []byte, pat seq[byte], lo, hi int, p perm) {
 	lemmaMatchesAtTruePointwise(seq(s), pat, lo)
 }
 
-// lemmaNoMatchExtendWindow: a window of s that the Rabin-Karp test rejects --
-// either because its hash differs from the pattern's or because the byte
-// comparison failed -- is not an occurrence, so the "no match before" prefix
-// grows past it. The two ways the test can fail are refuted separately: the
-// common one is arithmetic over RKHashRange alone, and only a hash collision
-// has to look at the bytes.
+// A window of s that the Rabin-Karp test rejects -- either because its hash
+// differs from the pattern's or because the byte comparison failed -- is not an
+// occurrence, so the "no match before" prefix grows past it. The two ways the
+// test can fail are refuted by the two lemmas below.
+//
+// They used to be one lemma, taking the disjunction
+//
+//	requires hash != RKHashRange(pat, 0, hi-lo) || seq(s[lo:hi]) != pat
+//
+// and branching on it internally. That reads better and cost about 500 s of a
+// ~1100 s member, intermittently over its assert budget: proving a disjunction
+// means Silicon has to evaluate both disjuncts at the call site, so every
+// iteration built the resliced window seq(s[lo:hi]) and needed the address
+// correspondence that gives it permission -- including on the overwhelmingly
+// common path where the hashes already differ and the bytes are irrelevant.
+//
+// Split, the caller picks the disjunct it is on with a ghost if, and the cheap
+// lemma mentions no window at all: no reslice, no ADDRESSES precondition, just
+// arithmetic over RKHashRange.
+
+// lemmaNoMatchExtendWindowHash: the window's hash differs from the pattern's.
+// This is the path taken at all but a handful of positions.
 ghost
 requires  0 < p
 requires  acc(s, p)
@@ -406,20 +422,34 @@ requires  0 <= lo && lo <= hi && hi <= len(s)
 requires  len(pat) == hi-lo
 requires  hash == RKHashRange(seq(s), lo, hi)
 requires  NoMatchBefore(seq(s), pat, lo)
-// ADDRESSES, as in lemmaMatchesAtWindow: needed for seq(s[lo:hi]) in the
-// clause below to have permission.
-requires  forall k int :: {&s[lo:hi][k]} {seq(s)[lo+k]} 0 <= k && k < hi-lo ==> &s[lo:hi][k] == &s[lo+k]
-requires  hash != RKHashRange(pat, 0, hi-lo) || seq(s[lo:hi]) != pat
+requires  hash != RKHashRange(pat, 0, hi-lo)
 ensures   acc(s, p)
 ensures   NoMatchBefore(seq(s), pat, lo+1)
 decreases
-func lemmaNoMatchExtendWindow(s []byte, pat seq[byte], lo, hi int, hash uint32, p perm) {
-	if hash != RKHashRange(pat, 0, hi-lo) {
-		lemmaMatchesAtFalseHashRange(seq(s), pat, lo, hi)
-	} else {
-		assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==> seq(s[lo:hi])[m] == seq(s)[lo+m]
-		lemmaMatchesAtFalseWitness(seq(s), pat, seq(s[lo:hi]), lo)
-	}
+func lemmaNoMatchExtendWindowHash(s []byte, pat seq[byte], lo, hi int, hash uint32, p perm) {
+	lemmaMatchesAtFalseHashRange(seq(s), pat, lo, hi)
+	lemmaNoMatchBeforeExtend(seq(s), pat, lo)
+}
+
+// lemmaNoMatchExtendWindowBytes: the hashes agree but the bytes do not, so the
+// window is a hash collision rather than an occurrence. Only this path needs to
+// look at the window.
+ghost
+requires  0 < p
+requires  acc(s, p)
+requires  0 <= lo && lo <= hi && hi <= len(s)
+requires  len(pat) == hi-lo
+requires  NoMatchBefore(seq(s), pat, lo)
+// ADDRESSES, as in lemmaMatchesAtWindow: needed for seq(s[lo:hi]) in the
+// clause below to have permission.
+requires  forall k int :: {&s[lo:hi][k]} {seq(s)[lo+k]} 0 <= k && k < hi-lo ==> &s[lo:hi][k] == &s[lo+k]
+requires  seq(s[lo:hi]) != pat
+ensures   acc(s, p)
+ensures   NoMatchBefore(seq(s), pat, lo+1)
+decreases
+func lemmaNoMatchExtendWindowBytes(s []byte, pat seq[byte], lo, hi int, p perm) {
+	assert forall m int :: {pat[m]} 0 <= m && m < len(pat) ==> seq(s[lo:hi])[m] == seq(s)[lo+m]
+	lemmaMatchesAtFalseWitness(seq(s), pat, seq(s[lo:hi]), lo)
 	lemmaNoMatchBeforeExtend(seq(s), pat, lo)
 }
 

@@ -213,7 +213,14 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 		//@ lemmaMatchesAtWindow(s, seq(sep), 0, n, p/4)
 		return 0
 	}
-	//@ lemmaNoMatchExtendWindow(s, seq(sep), 0, n, h, p/4)
+	// (Gobra) The test just failed, so either the hashes differ or the bytes
+	// do; picking the disjunct here rather than passing a disjunction keeps
+	// the resliced window out of the hash path. See lemmas.gobra.
+	//@ ghost if h != hashsep {
+	//@ 	lemmaNoMatchExtendWindowHash(s, seq(sep), 0, n, h, p/4)
+	//@ } else {
+	//@ 	lemmaNoMatchExtendWindowBytes(s, seq(sep), 0, n, p/4)
+	//@ }
 	//@ invariant 0 < n && n == len(sep)
 	//@ invariant n <= i && i <= len(s)
 	//@ invariant acc(s, p/2) && acc(sep, p/2)
@@ -246,7 +253,11 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 			//@ lemmaMatchesAtWindow(s, seq(sep), lo, i, p/4)
 			return i - n
 		}
-		//@ lemmaNoMatchExtendWindow(s, seq(sep), lo, i, h, p/4)
+		//@ ghost if h != hashsep {
+		//@ 	lemmaNoMatchExtendWindowHash(s, seq(sep), lo, i, h, p/4)
+		//@ } else {
+		//@ 	lemmaNoMatchExtendWindowBytes(s, seq(sep), lo, i, p/4)
+		//@ }
 	}
 	return -1
 }

@@ -1,0 +1,213 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// Package arith holds lemmas about non-linear integer arithmetic.
+//
+// It exists so that packages which need such facts do not have to let the
+// solver find them. Non-linear arithmetic is where Z3 wanders: in
+// internal/bytealg it was the difference between a package that verifies in
+// seconds and one that grinds for twenty minutes and reports a different
+// failure on each run. That package is therefore verified with --disableNL,
+// which makes the solver treat a product of two non-constants as uninterpreted,
+// and takes the facts it needs from the lemmas below instead.
+//
+// This package itself is verified normally, with non-linear arithmetic enabled.
+// It is small, so the solver has little room to wander, and each lemma is
+// proved once here rather than rediscovered at every use site.
+package arith
+
+// Pow is exponentiation: Pow(b, e) == b^e, on uint32 and so wrapping, exactly
+// as repeated Go multiplication would.
+ghost
+requires 0 <= e
+decreases e
+pure func Pow(b uint32, e int) uint32 {
+	return e == 0 ? uint32(1) : Pow(b, e-1) * b
+}
+
+// PowStep is Pow's defining equation. A caller verified with --disableNL cannot
+// use the definition directly, because unfolding it produces a product of two
+// non-constants; this hands over the same equation as a proved fact.
+ghost
+requires 0 < e
+ensures  Pow(b, e) == Pow(b, e-1) * b
+decreases
+func PowStep(b uint32, e int) {}
+
+// PowZero and PowOne are the base cases.
+ghost
+ensures Pow(b, 0) == 1
+decreases
+func PowZero(b uint32) {}
+
+ghost
+ensures Pow(b, 1) == b
+decreases
+func PowOne(b uint32) {
+	assert Pow(b, 1) == Pow(b, 0)*b
+	assert Pow(b, 0) == 1
+}
+
+// PowEven: b^(2k) == (b*b)^k. This is the halving step of exponentiation by
+// squaring, which is how the hash functions of internal/bytealg compute powers.
+ghost
+requires 0 <= k
+ensures  Pow(b, 2*k) == Pow(b*b, k)
+decreases k
+func PowEven(b uint32, k int) {
+	if k != 0 {
+		PowEven(b, k-1)
+		assert Pow(b, 2*k) == Pow(b, 2*k-1)*b
+		assert Pow(b, 2*k-1) == Pow(b, 2*k-2)*b
+		assert Pow(b*b, k) == Pow(b*b, k-1)*(b*b)
+	}
+}
+
+// PowOdd: b^(2k+1) == (b*b)^k * b.
+ghost
+requires 0 <= k
+ensures  Pow(b, 2*k+1) == Pow(b*b, k)*b
+decreases
+func PowOdd(b uint32, k int) {
+	PowEven(b, k)
+	assert Pow(b, 2*k+1) == Pow(b, 2*k)*b
+}
+
+// MulComm, MulAssoc and MulComm3 are the rearrangements a caller with
+// --disableNL can no longer do for itself.
+ghost
+ensures x*y == y*x
+decreases
+func MulComm(x, y uint32) {}
+
+ghost
+ensures (x*y)*z == x*(y*z)
+decreases
+func MulAssoc(x, y, z uint32) {}
+
+ghost
+ensures x*y*z == x*z*y
+decreases
+func MulComm3(x, y, z uint32) {}
+
+// MulDistrib distributes a product over a sum.
+ghost
+ensures x*(y+z) == x*y + x*z
+decreases
+func MulDistrib(x, y, z uint32) {}
+
+// The shapes below are the ones a Rabin-Karp style proof actually needs. Each
+// is a rearrangement its caller could do for itself with non-linear arithmetic
+// enabled, and cannot once it is disabled.
+//
+// They take the powers they talk about as ordinary values, constrained by a
+// precondition to be the powers in question, rather than writing Pow(b, e)
+// inside the conclusion. That is what makes them usable. A caller states its
+// own contracts in terms of its own abstraction -- internal/bytealg says
+// PowRK(PrimeRK, n), which is Pow(PrimeRK, n) by definition -- and with
+// non-linear arithmetic disabled the two are nevertheless distinct monomials
+// once they sit under a product: knowing Pow(b, e) == PowRK(b, e) does not
+// give the solver Pow(b, e)*x == PowRK(b, e)*x. Passing the caller's own term
+// as an argument sidesteps that entirely: the conclusion is then already
+// phrased in the caller's terms and needs no bridging back.
+
+// MulOneAt: b^0 * x == x, for a caller holding b^0 as p0.
+ghost
+requires p0 == Pow(b, 0)
+ensures  p0*x == x
+decreases
+func MulOneAt(p0, b, x uint32) {
+	PowZero(b)
+}
+
+// PowHornerStep is one step of Horner's rule with the weight of the leading
+// term moved up one power. Given h == b^e * x + r,
+//   h * b + y == b^(e+1) * x + (r*b + y).
+// This is the whole non-linear content of a rolling-hash proof.
+//
+// Note that h, like the powers, is a parameter rather than a subexpression of
+// the conclusion. That is not cosmetic. Writing the conclusion over
+// (pe*x + r)*b + y instead leaves the caller to get from its own h*b + y to
+// that form, and with --disableNL it will not: each step of that rearrangement
+// is available to it on its own -- scaling h == pe*x + r by b, distributing b
+// over the sum -- and the chain still fails, because the solver gives up once
+// a proof needs several of them at once over the same non-linear monomial.
+// With h named, the conclusion is already the caller's own term and there is
+// no chain left to fail.
+ghost
+requires 0 <= e
+requires pe == Pow(b, e) && pf == Pow(b, e+1)
+requires h == pe*x + r
+ensures  h*b + y == pf*x + (r*b + y)
+decreases
+func PowHornerStep(pe, pf, b, x, r, y, h uint32, e int) {
+	PowStep(b, e+1)
+}
+
+// MulPow is a * b^e as a single term.
+//
+// An exponentiation-by-squaring loop maintains exactly this quantity while it
+// reassigns both a and b, so a caller verified with --disableNL cannot state
+// the invariant as the product a*Pow(b, e): re-establishing it after the
+// assignments would mean substituting equals for equals under a product, and
+// the solver does not do that. Written as one function application it is an
+// ordinary uninterpreted term and the substitution is plain congruence.
+ghost
+requires 0 <= e
+decreases
+pure func MulPow(a, b uint32, e int) uint32 {
+	return a * Pow(b, e)
+}
+
+// MulPowStep is one step of exponentiation by squaring: halve the exponent,
+// square the base, and fold the odd bit into the factor.
+ghost
+requires 0 <= i && j == i/2 && bb == b*b
+requires i%2 == 0 ==> a2 == a
+requires i%2 != 0 ==> a2 == a*b
+ensures  MulPow(a, b, i) == MulPow(a2, bb, j)
+decreases
+func MulPowStep(a, a2, b, bb uint32, i, j int) {
+	if i%2 == 0 {
+		PowEven(b, j)
+	} else {
+		PowOdd(b, j)
+	}
+}
+
+// MulPowStart and MulPowEnd are the loop's two ends: it starts at a == 1 with
+// the full exponent, and finishes with the exponent down to zero.
+ghost
+requires 0 <= e
+ensures  MulPow(1, b, e) == Pow(b, e)
+decreases
+func MulPowStart(b uint32, e int) {}
+
+ghost
+ensures MulPow(a, b, 0) == a
+decreases
+func MulPowEnd(a, b uint32) {
+	PowZero(b)
+}
+
+// MulSubstFirst and MulSubstSecond are congruence for a product, as lemmas.
+// With --disableNL the solver will not rewrite under a product of two
+// non-constants at all, not even to replace equals by equals, so a caller has
+// to ask for the substitution explicitly. Both are stated purely over their
+// arguments, so instantiating them yields the caller's own terms and no
+// bridging back is needed.
+ghost
+requires x == y
+ensures  x*z == y*z
+decreases
+func MulSubstFirst(x, y, z uint32) {}
+
+ghost
+requires y == z
+ensures  x*y == x*z
+decreases
+func MulSubstSecond(x, y, z uint32) {}

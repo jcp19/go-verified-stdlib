@@ -29,14 +29,69 @@ package list
 // changed" postcondition.
 ghost const R perm = 1/1000
 
+// ElemSet is the set of elements of es. Ownership in Mem is keyed by this set
+// rather than by sequence index, which is what makes a permutation of l.es free:
+// moving an element leaves the set, and therefore the whole footprint, alone.
+//
+// The pointwise membership travels with the function as a postcondition, so that
+// Mem's body -- which cannot call a lemma -- still gets permission for l.es[i].
+// ElemSet is opaque: it is recursive, and it appears in Mem's body, so leaving
+// it transparent makes every `unfolding l.Mem()` -- that is, every call to Es(),
+// Vs() or IsInit() -- unroll the recursion. Mem needs only the postcondition,
+// which stays visible; the lemmas reveal the body where they induct on it.
+ghost
+ensures forall k int :: {es[k]} 0 <= k && k < len(es) ==> es[k] elem res
+// the empty case, so that folding Mem for a fresh or emptied list does not have
+// to reveal the body
+ensures len(es) == 0 ==> res == set[*Element]{}
+decreases len(es)
+opaque
+pure func ElemSet(es seq[*Element]) (res set[*Element]) {
+	return len(es) == 0 ? set[*Element]{} :
+		(set[*Element]{es[0]} union ElemSet(es[1:]))
+}
+
 pred (l *List) Mem() {
 	acc(l) &&
 	len(l.es) == len(l.vs) &&
 	l.length == len(l.es) &&
-	// ownership of all elements; no element is the sentinel; every element
-	// belongs to l and stores the corresponding value
-	(forall i int :: {l.es[i]} 0 <= i && i < len(l.es) ==> (
-		acc(l.es[i]) && l.es[i] != &l.root && l.es[i].list == l && l.es[i].Value === l.vs[i])) &&
+	// Ownership of all elements, one quantifier per field, each triggered on
+	// that field: the canonical Viper shape for a quantified permission. A
+	// single trigger covering the whole struct would not fire when the proof
+	// touches p.next, which is exactly what the linkage clauses below do.
+	//
+	// The condition is membership in the element set, not a range of indices.
+	// Keying it by index makes the receiver map change whenever l.es is
+	// permuted, and re-deriving the footprint through that permutation is what
+	// made move and remove diverge.
+	// An element occurs once. Under the old index-keyed ownership this was
+	// implied -- full permission to l.es[i] for every i cannot be held twice for
+	// the same pointer -- but a set-keyed footprint says nothing about the
+	// index-to-pointer map, so it has to be stated.
+	//
+	// Stated as a cardinality rather than as pairwise disequality: the pairwise
+	// form needs a two-variable multi-pattern, which is instantiated once per
+	// pair of l.es[.] terms, and Mem is unfolded by every call to Es(), Vs() and
+	// IsInit(). This form has no quantifier at all; LemmaDistinct unpacks it to
+	// the pairwise form at the few sites that need it.
+	len(ElemSet(l.es)) == len(l.es) &&
+	// Every element of the sequence is in the set that owns it. This is also
+	// ElemSet's postcondition, but stating it here puts it in scope of the
+	// clauses below, which need it to look up permission for l.es[i].
+	(forall i int :: {l.es[i]} 0 <= i && i < len(l.es) ==>
+		l.es[i] elem ElemSet(l.es)) &&
+	(forall p *Element :: {p.next} p elem ElemSet(l.es) ==> acc(&p.next)) &&
+	(forall p *Element :: {p.prev} p elem ElemSet(l.es) ==> acc(&p.prev)) &&
+	(forall p *Element :: {p.Value} p elem ElemSet(l.es) ==> acc(&p.Value)) &&
+	(forall p *Element :: {p.list} p elem ElemSet(l.es) ==>
+		acc(&p.list) && p != &l.root && p.list == l) &&
+	// Each element stores the corresponding value. Triggered on the sequence
+	// index rather than on the field read: a heap-dependent trigger has to be
+	// well-defined where it appears, and the permission for l.es[i].Value comes
+	// from the quantifier above. The body names l.vs[i], a term over a different
+	// sequence, so this cannot re-trigger itself.
+	(forall i int :: {l.es[i]} 0 <= i && i < len(l.es) ==>
+		l.es[i].Value === l.vs[i]) &&
 	// l.ini distinguishes the zero List value from an initialized empty list;
 	// both have empty sequences. A non-empty list is always initialized.
 	(len(l.es) > 0 ==> l.ini) &&
@@ -47,12 +102,22 @@ pred (l *List) Mem() {
 	// non-empty list: the sentinel is linked to the first and the last element
 	(len(l.es) > 0 ==> l.root.next == l.es[0] && l.root.prev == l.es[len(l.es)-1] &&
 		l.es[0].prev == &l.root && l.es[len(l.es)-1].next == &l.root) &&
-	// consecutive elements are linked to each other. The quantifier is
-	// phrased over pairs of indices (guarded by k == i+1) so that its body
-	// introduces no new seq-index terms, which would otherwise let the
-	// solver chain instantiations along the sequence.
-	(forall i, k int :: {l.es[i], l.es[k]} 0 <= i && k == i+1 && k < len(l.es) ==> (
-		l.es[i].next == l.es[k] && l.es[k].prev == l.es[i]))
+	// Consecutive elements are linked to each other, one direction each,
+	// triggered on the field read rather than on the sequence index.
+	//
+	// Triggering on l.es[i] would let the solver chain instantiations along the
+	// sequence, since the body names l.es[i+1]. Guarding a pair of indices by
+	// k == i+1 avoids that, but is instantiated once per *pair* of l.es[.]
+	// terms, and Mem pays that at every unfold. The field read is neither:
+	// matching is linear in one index and free of arithmetic, and naming
+	// l.es[i+1] does not create l.es[i+1].next, so the body cannot re-trigger
+	// the quantifier. That last part only holds because ownership above is
+	// keyed by the set; an index-keyed footprint materialises the field terms
+	// and the same trigger loops.
+	(forall i int :: {l.es[i].next} 0 <= i && i+1 < len(l.es) ==>
+		l.es[i].next == l.es[i+1]) &&
+	(forall i int :: {l.es[i].prev} 0 < i && i < len(l.es) ==>
+		l.es[i].prev == l.es[i-1])
 }
 
 // Es returns the elements of l, in list order.

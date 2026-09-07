@@ -35,3 +35,147 @@ func DistinctLists(a, b *List) {
 	fold a.Mem()
 	fold b.Mem()
 }
+
+// The set lemmas Mem's new ownership encoding needs. They are pure -- no heap,
+// no permissions -- so each verifies in its own small context in seconds,
+// which is the point: the work that used to happen inside every fold of Mem
+// now happens once here.
+
+// LemmaElemSetConcat distributes ElemSet over sequence concatenation.
+ghost
+ensures ElemSet(a ++ b) == ElemSet(a) union ElemSet(b)
+decreases len(a)
+func LemmaElemSetConcat(a, b seq[*Element]) {
+	if len(a) == 0 {
+		assert a ++ b == b
+		assert reveal ElemSet(a) == set[*Element]{}
+	} else {
+		LemmaElemSetConcat(a[1:], b)
+		assert (a ++ b)[1:] == a[1:] ++ b
+		assert (a ++ b)[0] == a[0]
+		assert reveal ElemSet(a ++ b) ==
+			set[*Element]{a[0]} union ElemSet(a[1:] ++ b)
+		assert reveal ElemSet(a) == set[*Element]{a[0]} union ElemSet(a[1:])
+	}
+}
+
+// LemmaMoveSeqElemSet is what makes move's fold free: moving an element
+// permutes the sequence but leaves the set of owned elements alone, so the
+// quantified permissions in Mem are literally unchanged.
+ghost
+requires 0 <= i && i < len(es)
+requires -1 <= j && j < len(es)
+ensures  ElemSet(MoveSeq(es, i, j)) == ElemSet(es)
+decreases
+func LemmaMoveSeqElemSet(es seq[*Element], i, j int) {
+	if i != j {
+		rest := es[:i] ++ es[i+1:]
+		pos := j < i ? j+1 : j
+		LemmaElemSetConcat(es[:i], es[i:])
+		assert es[:i] ++ es[i:] == es
+		assert es[i:][0] == es[i] && es[i:][1:] == es[i+1:]
+		assert reveal ElemSet(es[i:]) == set[*Element]{es[i]} union ElemSet(es[i+1:])
+		LemmaElemSetConcat(es[:i], es[i+1:])
+		LemmaElemSetConcat(rest[:pos], seq[*Element]{es[i]} ++ rest[pos:])
+		LemmaElemSetConcat(seq[*Element]{es[i]}, rest[pos:])
+		LemmaElemSetConcat(rest[:pos], rest[pos:])
+		assert rest[:pos] ++ rest[pos:] == rest
+		assert seq[*Element]{es[i]}[0] == es[i]
+		assert seq[*Element]{es[i]}[1:] == seq[*Element]{}
+		assert reveal ElemSet(seq[*Element]{}) == set[*Element]{}
+		assert reveal ElemSet(seq[*Element]{es[i]}) == set[*Element]{es[i]}
+		assert MoveSeq(es, i, j) == rest[:pos] ++ (seq[*Element]{es[i]} ++ rest[pos:])
+	}
+}
+
+// LemmaInsertElemSet: splicing e into es at position j+1 adds exactly e to the
+// element set, which is what insert's fold needs to see.
+ghost
+requires -1 <= j && j < len(es)
+ensures  ElemSet(es[:j+1] ++ seq[*Element]{e} ++ es[j+1:]) ==
+	ElemSet(es) union set[*Element]{e}
+decreases
+func LemmaInsertElemSet(es seq[*Element], e *Element, j int) {
+	LemmaElemSetConcat(es[:j+1], seq[*Element]{e} ++ es[j+1:])
+	LemmaElemSetConcat(seq[*Element]{e}, es[j+1:])
+	LemmaElemSetConcat(es[:j+1], es[j+1:])
+	assert es[:j+1] ++ es[j+1:] == es
+	assert seq[*Element]{e}[0] == e
+	assert seq[*Element]{e}[1:] == seq[*Element]{}
+	assert reveal ElemSet(seq[*Element]{}) == set[*Element]{}
+	assert reveal ElemSet(seq[*Element]{e}) == set[*Element]{e}
+	assert es[:j+1] ++ seq[*Element]{e} ++ es[j+1:] ==
+		es[:j+1] ++ (seq[*Element]{e} ++ es[j+1:])
+}
+
+// LemmaRemoveElemSet: dropping index i removes exactly es[i] from the element
+// set. Distinctness is what rules out es[i] still occurring elsewhere.
+ghost
+requires 0 <= i && i < len(es)
+requires forall a, b int :: {es[a], es[b]} 0 <= a && a < b && b < len(es) ==> es[a] != es[b]
+ensures  ElemSet(es[:i] ++ es[i+1:]) == ElemSet(es) setminus set[*Element]{es[i]}
+decreases
+func LemmaRemoveElemSet(es seq[*Element], i int) {
+	LemmaElemSetConcat(es[:i], es[i+1:])
+	LemmaElemSetConcat(es[:i], es[i:])
+	assert es[:i] ++ es[i:] == es
+	assert es[i:][0] == es[i] && es[i:][1:] == es[i+1:]
+	assert reveal ElemSet(es[i:]) == set[*Element]{es[i]} union ElemSet(es[i+1:])
+	// es[i] is in neither part, by distinctness
+	assert forall a int :: {es[:i][a]} 0 <= a && a < i ==> es[:i][a] == es[a] && es[a] != es[i]
+	assert forall a int :: {es[i+1:][a]} 0 <= a && a < len(es[i+1:]) ==>
+		es[i+1:][a] == es[i+1+a] && es[i+1+a] != es[i]
+	LemmaNotElem(es[:i], es[i])
+	LemmaNotElem(es[i+1:], es[i])
+}
+
+// LemmaNotElem: a pointer that differs from every entry of es is not in its set.
+ghost
+requires forall a int :: {es[a]} 0 <= a && a < len(es) ==> es[a] != e
+ensures  !(e elem ElemSet(es))
+decreases len(es)
+func LemmaNotElem(es seq[*Element], e *Element) {
+	if len(es) == 0 {
+		assert reveal ElemSet(es) == set[*Element]{}
+	} else {
+		assert forall a int :: {es[1:][a]} 0 <= a && a < len(es[1:]) ==> es[1:][a] == es[a+1]
+		LemmaNotElem(es[1:], e)
+		assert reveal ElemSet(es) == set[*Element]{es[0]} union ElemSet(es[1:])
+	}
+}
+
+// LemmaElemSetCard: a sequence has at least as many entries as its element set.
+ghost
+ensures len(ElemSet(es)) <= len(es)
+decreases len(es)
+func LemmaElemSetCard(es seq[*Element]) {
+	if len(es) == 0 {
+		assert reveal ElemSet(es) == set[*Element]{}
+	} else {
+		LemmaElemSetCard(es[1:])
+		assert reveal ElemSet(es) == set[*Element]{es[0]} union ElemSet(es[1:])
+	}
+}
+
+// LemmaDistinct unpacks Mem's cardinality invariant into the pairwise form.
+// Keeping the pairwise quantifier out of Mem and asking for it here means its
+// two-variable multi-pattern is instantiated at the few sites that need it,
+// rather than at every unfold of Mem.
+ghost
+requires len(ElemSet(es)) == len(es)
+ensures  forall a, b int :: {es[a], es[b]} 0 <= a && a < b && b < len(es) ==> es[a] != es[b]
+decreases len(es)
+func LemmaDistinct(es seq[*Element]) {
+	if len(es) > 0 {
+		assert reveal ElemSet(es) == set[*Element]{es[0]} union ElemSet(es[1:])
+		LemmaElemSetCard(es[1:])
+		// es[0] cannot recur in the tail: the union would absorb it and the
+		// cardinality would fall short of len(es).
+		if es[0] elem ElemSet(es[1:]) {
+			assert ElemSet(es) == ElemSet(es[1:])
+			assert false
+		}
+		LemmaDistinct(es[1:])
+		assert forall a int :: {es[1:][a]} 0 <= a && a < len(es[1:]) ==> es[1:][a] == es[a+1]
+	}
+}

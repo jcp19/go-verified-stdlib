@@ -195,6 +195,9 @@ func (l *List) insert(e, at *Element /*@ , ghost j int @*/) (ret *Element) {
 	//@ unfold l.Mem()
 	//@ ghost var es0 seq[*Element] = l.es
 	//@ ghost var vs0 seq[any] = l.vs
+	// Framing the untouched links across the writes below needs to know that
+	// es0 has no duplicates, which Mem now carries as a cardinality invariant.
+	//@ LemmaDistinct(es0)
 	// e is detached (e.list == nil) while every element of es0 has list == l,
 	// and the sentinel is owned separately, so e is distinct from all of them.
 	//@ assert forall i1 int :: {es0[i1]} 0 <= i1 && i1 < len(es0) ==> es0[i1] != e
@@ -217,6 +220,19 @@ func (l *List) insert(e, at *Element /*@ , ghost j int @*/) (ret *Element) {
 	e.next.prev = e
 	e.list = l
 	l.length++
+	// Name the two links the splice creates, in terms of es2. The linkage
+	// clauses of Mem trigger on the field read, so the fold needs es2[j].next
+	// and es2[j+1].next rather than facts phrased over at and e.
+	//@ assert es2[j+1] == e
+	//@ assert 0 <= j ==> es2[j] == es0[j] && es2[j].next == es2[j+1]
+	//@ assert 0 <= j ==> es2[j+1].prev == es2[j]
+	//@ assert j+2 < len(es2) ==> es2[j+2] == es0[j+1]
+	//@ assert j+2 < len(es2) ==> es2[j+1].next == es2[j+2]
+	//@ assert j+2 < len(es2) ==> es2[j+2].prev == es2[j+1]
+	// splicing e in adds exactly e to the element set Mem's permissions are
+	// keyed by
+	//@ LemmaNotElem(es0, e)
+	//@ LemmaInsertElemSet(es0, e, j)
 	//@ l.es = es2
 	//@ l.vs = vs2
 	//@ l.ini = true
@@ -267,6 +283,10 @@ func (l *List) remove(e *Element /*@ , ghost i int @*/) {
 	e.prev = nil // avoid memory leaks
 	e.list = nil
 	l.length--
+	// dropping index i removes exactly e from the element set, handing its
+	// permission back to the caller
+	//@ LemmaDistinct(es0)
+	//@ LemmaRemoveElemSet(es0, i)
 	//@ l.es = es2
 	//@ l.vs = vs2
 	//@ fold l.Mem()
@@ -289,6 +309,8 @@ func (l *List) move(e, at *Element /*@ , ghost i int, ghost j int @*/) {
 	//@ ghost var es0 seq[*Element] = l.es
 	//@ ghost var vs0 seq[any] = l.vs
 	/*@
+	// unpack Mem's cardinality invariant to the pairwise form
+	LemmaDistinct(es0)
 	assert forall i1, i2 int :: {es0[i1], es0[i2]} 0 <= i1 && i1 < i2 && i2 < len(es0) ==>
 		es0[i1] != es0[i2]
 	@*/
@@ -316,6 +338,10 @@ func (l *List) move(e, at *Element /*@ , ghost i int, ghost j int @*/) {
 	e.next.prev = e
 	//@ ghost var es2 seq[*Element] = MoveSeq(es0, i, j)
 	//@ ghost var vs2 seq[any] = MoveSeqV(vs0, i, j)
+	// Moving an element permutes l.es but leaves the element set alone, so the
+	// quantified permissions in Mem are unchanged and the fold has nothing to
+	// re-derive -- and es2 inherits es0's cardinality invariant.
+	//@ LemmaMoveSeqElemSet(es0, i, j)
 	//@ assert len(es2) == len(es0) && len(vs2) == len(vs0)
 	/*@
 	ghost if j < i {
@@ -331,6 +357,7 @@ func (l *List) move(e, at *Element /*@ , ghost i int, ghost j int @*/) {
 	}
 	@*/
 	/*@
+	LemmaDistinct(es2)
 	assert forall i1, i2 int :: {es2[i1], es2[i2]} 0 <= i1 && i1 < i2 && i2 < len(es2) ==>
 		es2[i1] != es2[i2]
 	@*/
@@ -496,6 +523,7 @@ func (l *List) InsertAfter(v any, mark *Element /*@ , ghost ml *List, ghost m in
 func (l *List) MoveToFront(e *Element /*@ , ghost el *List, ghost i int @*/) {
 	//@ unfold l.Mem()
 	/*@
+	LemmaDistinct(l.es)
 	assert forall i1, i2 int :: {l.es[i1], l.es[i2]} 0 <= i1 && i1 < i2 && i2 < len(l.es) ==>
 		l.es[i1] != l.es[i2]
 	@*/
@@ -534,6 +562,7 @@ func (l *List) MoveToFront(e *Element /*@ , ghost el *List, ghost i int @*/) {
 func (l *List) MoveToBack(e *Element /*@ , ghost el *List, ghost i int @*/) {
 	//@ unfold l.Mem()
 	/*@
+	LemmaDistinct(l.es)
 	assert forall i1, i2 int :: {l.es[i1], l.es[i2]} 0 <= i1 && i1 < i2 && i2 < len(l.es) ==>
 		l.es[i1] != l.es[i2]
 	@*/
@@ -578,6 +607,7 @@ func (l *List) MoveToBack(e *Element /*@ , ghost el *List, ghost i int @*/) {
 func (l *List) MoveBefore(e, mark *Element /*@ , ghost ml *List, ghost i int, ghost m int @*/) {
 	//@ unfold l.Mem()
 	/*@
+	LemmaDistinct(l.es)
 	assert forall i1, i2 int :: {l.es[i1], l.es[i2]} 0 <= i1 && i1 < i2 && i2 < len(l.es) ==>
 		l.es[i1] != l.es[i2]
 	@*/
@@ -621,6 +651,7 @@ func (l *List) MoveBefore(e, mark *Element /*@ , ghost ml *List, ghost i int, gh
 func (l *List) MoveAfter(e, mark *Element /*@ , ghost ml *List, ghost i int, ghost m int @*/) {
 	//@ unfold l.Mem()
 	/*@
+	LemmaDistinct(l.es)
 	assert forall i1, i2 int :: {l.es[i1], l.es[i2]} 0 <= i1 && i1 < i2 && i2 < len(l.es) ==>
 		l.es[i1] != l.es[i2]
 	@*/

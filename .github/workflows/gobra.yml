@@ -16,10 +16,12 @@ jobs:
       # Gobra runs in config file mode: all of its options come from
       # src/gobra-mod.json (module-wide) and the per-package gobra.json files.
       #
-      # The Gobra image also supplies Z3. All three packages verify on the Z3
-      # that `latest` currently ships (4.16.0), but they are sensitive to the
-      # version and two of them had to be re-encoded to stop being so; see
-      # src/gobra/TOOLCHAIN.md before changing their proofs.
+      # The Gobra image also supplies Z3. `sort` and `container/list` verify
+      # on the Z3 that `latest` currently ships (4.16.0). `internal/bytealg`
+      # does not verify reliably on it -- expect this workflow to fail on that
+      # package roughly one run in three, in IndexRabinKarpBytes, which sits on
+      # its assert budget. See src/gobra/TOOLCHAIN.md and
+      # src/internal/bytealg/GOBRA.md.
       - name: Verify package sort
         uses: viperproject/gobra-action@main
         with:

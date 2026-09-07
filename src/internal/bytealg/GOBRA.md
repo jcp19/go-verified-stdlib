@@ -171,6 +171,75 @@ the step is plain congruence. The loops also call their step lemma *after* the
 assignments, passing the pre-step values as ghost snapshots, so that the lemma
 speaks in the loop's own post-state terms.
 
+### Profiling it properly
+
+`opaque` and `--disableNL` fixed five of the six members and left
+`IndexRabinKarpBytes` still on its budget, so it was profiled with Silicon's
+per-query recorder ([PR #966]) on the current encoding. That measurement is
+what the last round of changes is based on, and it contradicted the two
+hypotheses that looked most plausible from the source:
+
+| category | queries | time | share |
+|---|---|---|---|
+| `FunctionalCorrectness` | 167 | 429.6 s | **85.0%** |
+| `Heap` | 325 | 73.2 s | 14.5% |
+| `PathInfeasibility` | 80 | 1.2 s | 0.2% |
+| `Consistency` | 96 | 1.0 s | 0.2% |
+| `ScopeManagement` | 1848 | 0.5 s | 0.1% |
+
+So it is not path explosion, and it is not the quantified permissions as such
+-- a `Bytes`-style predicate wrapping `acc(s, p)` would have been aimed at 14.5%
+of the cost, and this member indexes and reslices `s` every iteration with its
+whole specification phrased over `seq(s)`, so the predicate would have been
+unfolded almost everywhere anyway.
+
+**One source position accounted for 343.8 s -- 68% of all prover time -- in
+five queries, four of which failed at 44-110 s each.** It was a single
+precondition of the hash-mismatch lemma:
+
+```gobra
+requires acc(s, p)
+requires hash == RKHashRange(seq(s), lo, hi)
+```
+
+The obligation is trivially implied by the loop invariant. What made it cost
+68% of the member is that `seq(s)` had to be re-derived from a fragmented heap:
+the call first splits the quantified permission for `s`, and the `Equal` call
+earlier in the body has already exhaled and re-inhaled a slice of it, leaving
+`pTaken` masks behind. Every mention of `seq(s)` after that point is a fresh
+snapshot map over the whole slice.
+
+Two changes follow, and they are the ones that matter:
+
+- **Lemmas that only need sequences take sequences.** `lemmaNoMatchExtendWindowHash`
+  now takes `q seq[byte]` and carries no permission at all; its body never
+  needed the slice. The caller evaluates `seq(s)` once, at the call, in its own
+  unmodified state.
+- **The search loop pins `seq(s)` and `seq(sep)`** to ghost values `qs` and
+  `qsep` and states its invariant and its lemma calls over those, so the
+  snapshot is re-derived once per iteration rather than at every use.
+
+Measured on the isolated member, all three runs failing at the same obligation
+so they compare like for like:
+
+| | isolated member |
+|---|---|
+| before | 929 s |
+| sequence-taking lemma | 607 s |
+| + pinned `qs`/`qsep` | **331 s** |
+
+Two further experiments were measured and **reverted**, which is worth
+recording so they are not retried blindly:
+
+- Weakening `Equal`'s trusted precondition from `acc(a) && acc(b)` (which is
+  *write* permission, for a read-only comparison) to a wildcard: 614 s against
+  607 s, i.e. no effect. It is still an over-strong contract and worth fixing
+  on its own merits, but not for performance, and not worth touching the
+  trusted computing base for nothing.
+- Hoisting the hash-mismatch lemma above the window test, where the context is
+  smaller: it fails outright, and still fails with the assert budget raised to
+  200 s, so the fact genuinely is not available that early.
+
 ### Where it stands
 
 On Z3 4.16.0, with `chop` 5 and `assert_timeout` 30000:
@@ -179,25 +248,30 @@ On Z3 4.16.0, with `chop` 5 and `assert_timeout` 30000:
 |---|---|---|
 | `HashStrBytes`, `HashStr`, `HashStrRevBytes`, `HashStrRev`, `IndexRabinKarp` | part of a ~20 min package run | 15-20 s each |
 | four of the five chops | ~20 min | **24 s** |
-| whole package | 889-1163 s, **1 error**, non-deterministic | 1121 s, **0 errors** |
+| whole package | 889-1163 s, **1 error every run** | 601-797 s, **0 errors in 2 runs of 3** |
 
-The remaining time is all in `IndexRabinKarpBytes`, which still has little
-margin: verified as a single unchopped task it exceeds its budget at
-`lemmaNoMatchExtendWindow` after ~18 minutes, and it is only the `chop 5`
-split that gets it through. The cost is in the window test, not in the
-arithmetic:
+That is a real improvement and it is **not a fix**. `IndexRabinKarpBytes` still
+sits on its assert budget: it fails on roughly one run in three, and which
+obligation falls over still moves between runs (the loop invariant
+`h == RKHashRange(qs, i-n, i)` in one run, the window lemma's precondition in
+another). Verified as a single unchopped task it exceeds its budget regardless,
+so the `chop: 5` in `gobra.json` is a requirement, not an optimisation. CI will
+be flaky on this package until the Z3 regression is addressed upstream; Z3
+4.13.0 verifies it unchanged.
 
-| region (`assume false` walk-down of the loop body) | cumulative |
+The remaining cost, after the changes above, is the window test itself -- the
+`Equal` call, `lemmaMatchesAtWindow`, and the member's own postconditions over
+`seq(s)` on the return paths. An `assume false` walk-down of the loop body puts
+it there:
+
+| region | cumulative |
 |---|---|
-| loop body vacuous | 62 s |
-| + the hash-roll arithmetic | 137 s |
-| + `lemmaRKHashRangeRoll` | 59 s |
-| + the address-mapping assert | 195 s |
-| + the `Equal` test and `lemmaMatchesAtWindow` | 940 s |
+| loop body vacuous, through the roll arithmetic | 210 s |
+| + the address-mapping assert | 173 s (free; it cost 195 s before `opaque`) |
+| + the `Equal` test and `lemmaMatchesAtWindow` | 612 s |
+| + the window-rejection lemma | ~1100 s |
 
-so that is where any further work on this package belongs. Extracting the
-address mapping into a lemma does cut the member (1195 s -> 760 s in a sliced
-context) but loses a fact the inline assert supplies, so it is not a drop-in.
+so that is where any further work belongs.
 
 ### The per-member prover option, and why it does not work yet
 
@@ -289,11 +363,11 @@ The implementation logic is unchanged. The full list of code-level edits:
 - **Cost of the `IndexRabinKarpBytes` contract.** The search-correctness
   conjuncts are what the package's verification time is spent on:
   `IndexRabinKarpBytes` alone is ~97% of it. Everything else in the package
-  verifies in about twenty seconds; that member takes the remaining ~18
-  minutes. That is comfortable against the CI job's 1h timeout but leaves
-  little appetite for adding more to this member. See the section on
-  non-linear arithmetic above for what the two encodings that got it to
-  verify at all were, and for where its remaining time goes.
+  verifies in about half a minute; that member takes the remaining 10-13
+  minutes, and does not reliably fit its assert budget -- it fails on roughly
+  one run in three. That is comfortable against the CI job's 1h timeout but
+  leaves no appetite at all for adding more to this member. See the sections
+  above for the three reworkings it has had and where its remaining time goes.
 
 ## What made the search-correctness proof go through
 

@@ -5,11 +5,18 @@ which verifies with the `ghcr.io/viperproject/gobra:latest` image. The image
 bakes in both the Gobra build and the Z3 binary, so the packages here are
 verified against whatever Z3 that image ships.
 
-**As things stand, all three packages verify on Z3 4.16.0** (and on 4.8.7 and
-4.13.0). Getting there was not free, though, and the rest of this file records
-why: the packages here used to be sensitive to the Z3 version, and to one Z3
-option in particular, and two of them had to be re-encoded to stop being so.
-Anyone changing their proofs should know which cliffs are nearby.
+**`sort` and `container/list` verify on Z3 4.16.0**, and did not before;
+`container/list` had to be re-encoded to get there. **`internal/bytealg` does
+not verify reliably**: it passes about two runs in three on the same source, and
+its one expensive member, `IndexRabinKarpBytes`, sits on its assert budget. Its
+proofs have been reworked twice (see `../internal/bytealg/GOBRA.md`) and the
+member is roughly three times cheaper than it was, but not cheap enough to be
+stable. Z3 4.13.0 still verifies everything here unchanged, so the underlying
+regression is the one described below, and the durable fix is upstream.
+
+The rest of this file records why these packages are sensitive to the Z3
+version at all. Anyone changing their proofs should know which cliffs are
+nearby.
 
 ## The Z3 4.14 regression
 
@@ -46,16 +53,21 @@ changes needed:
 |---|---|---|---|
 | `sort` | 0 errors, 8 s | 0 errors, 7 s | **0 errors, 8 s** |
 | `container/list` | 0 errors, 326 s | aborted: prover crash | **0 errors, 122-217 s** |
-| `internal/bytealg` | 0 errors, 1171 s | 1 error, 1163 s | **0 errors, 1121 s** |
+| `internal/bytealg` | 0 errors, 1171 s | 1 error every run, 889-1163 s | **0 errors in 2 runs of 3, 601-797 s** |
 
-Both packages have since been re-encoded to verify on Z3 4.16 as well, so
-nothing in this repository depends on the Z3 version any more. `container/list`
-moved its ownership from indices to a set, which removed a matching loop; see
-`../container/list/VERIFICATION.md`. `internal/bytealg` made its recursive
-abstractions `opaque` and moved its non-linear arithmetic into `arith/`, so that
-it can be verified with `--disableNL`; see `../internal/bytealg/GOBRA.md`. It
-was the narrower of the two: it already failed on Z3 4.13.4, one patch release
-before `container/list` used to break.
+`container/list` was re-encoded to verify on Z3 4.16: it moved its ownership
+from indices to a set, which removed a matching loop; see
+`../container/list/VERIFICATION.md`. It is now solidly green.
+
+`internal/bytealg` was reworked too -- `opaque` abstractions, non-linear
+arithmetic moved to `arith/` so the package can run with `--disableNL`, and its
+window lemmas rephrased to keep `seq(s)` out of a fragmented heap. Five of its
+six members became cheap enough to be immune (four of the five chops finish in
+under half a minute), and `IndexRabinKarpBytes` went from failing on every run
+to failing on roughly one in three. That is an improvement, not a fix, and CI
+will be flaky on this package until the regression below is addressed upstream.
+It was always the narrower of the two: it already failed on Z3 4.13.4, one patch
+release before `container/list` used to break.
 
 On the whole package the divergence is not merely slow. `move` and `remove`
 grow a single Z3 process past 7.5 GB until the kernel kills it, and Silicon

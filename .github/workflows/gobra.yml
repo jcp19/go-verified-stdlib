@@ -19,8 +19,9 @@ jobs:
       # The Gobra image also supplies Z3. `sort` and `container/list` verify
       # on the Z3 that `latest` currently ships (4.16.0). `internal/bytealg`
       # does not verify reliably on it -- expect this workflow to fail on that
-      # package roughly one run in three, in IndexRabinKarpBytes, which sits on
-      # its assert budget. See src/gobra/TOOLCHAIN.md and
+      # package intermittently (one of four repeat runs, when last measured), in
+      # IndexRabinKarpBytes, which sits on its assert budget. See
+      # src/gobra/TOOLCHAIN.md and
       # src/internal/bytealg/GOBRA.md.
       - name: Verify package sort
         uses: viperproject/gobra-action@main

@@ -248,11 +248,11 @@ On Z3 4.16.0, with `chop` 5 and `assert_timeout` 30000:
 |---|---|---|
 | `HashStrBytes`, `HashStr`, `HashStrRevBytes`, `HashStrRev`, `IndexRabinKarp` | part of a ~20 min package run | 15-20 s each |
 | four of the five chops | ~20 min | **24 s** |
-| whole package | 889-1163 s, **1 error every run** | 601-797 s, **0 errors in 2 runs of 3** |
+| whole package | 889-1163 s, **1 error every run** | 601-1105 s, **0 errors in 3 of 4 runs** |
 
 That is a real improvement and it is **not a fix**. `IndexRabinKarpBytes` still
-sits on its assert budget: it fails on roughly one run in three, and which
-obligation falls over still moves between runs (the loop invariant
+sits on its assert budget: one of four repeat runs on identical source failed,
+and which obligation falls over still moves between runs (the loop invariant
 `h == RKHashRange(qs, i-n, i)` in one run, the window lemma's precondition in
 another). Verified as a single unchopped task it exceeds its budget regardless,
 so the `chop: 5` in `gobra.json` is a requirement, not an optimisation. CI will
@@ -363,9 +363,9 @@ The implementation logic is unchanged. The full list of code-level edits:
 - **Cost of the `IndexRabinKarpBytes` contract.** The search-correctness
   conjuncts are what the package's verification time is spent on:
   `IndexRabinKarpBytes` alone is ~97% of it. Everything else in the package
-  verifies in about half a minute; that member takes the remaining 10-13
-  minutes, and does not reliably fit its assert budget -- it fails on roughly
-  one run in three. That is comfortable against the CI job's 1h timeout but
+  verifies in about half a minute; that member takes the remaining 10-18
+  minutes, and does not reliably fit its assert budget -- one of four repeat
+  runs failed. That is comfortable against the CI job's 1h timeout but
   leaves no appetite at all for adding more to this member. See the sections
   above for the three reworkings it has had and where its remaining time goes.
 

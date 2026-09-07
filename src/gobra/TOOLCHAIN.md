@@ -7,8 +7,9 @@ verified against whatever Z3 that image ships.
 
 **`sort` and `container/list` verify on Z3 4.16.0**, and did not before;
 `container/list` had to be re-encoded to get there. **`internal/bytealg` does
-not verify reliably**: it passes about two runs in three on the same source, and
-its one expensive member, `IndexRabinKarpBytes`, sits on its assert budget. Its
+not verify reliably**: of four repeat runs on identical source, three passed and
+one failed, and its one expensive member, `IndexRabinKarpBytes`, sits on its
+assert budget. Its
 proofs have been reworked twice (see `../internal/bytealg/GOBRA.md`) and the
 member is roughly three times cheaper than it was, but not cheap enough to be
 stable. Z3 4.13.0 still verifies everything here unchanged, so the underlying
@@ -53,7 +54,7 @@ changes needed:
 |---|---|---|---|
 | `sort` | 0 errors, 8 s | 0 errors, 7 s | **0 errors, 8 s** |
 | `container/list` | 0 errors, 326 s | aborted: prover crash | **0 errors, 122-217 s** |
-| `internal/bytealg` | 0 errors, 1171 s | 1 error every run, 889-1163 s | **0 errors in 2 runs of 3, 601-797 s** |
+| `internal/bytealg` | 0 errors, 1171 s | 1 error every run, 889-1163 s | **0 errors in 3 of 4 runs, 601-1105 s** |
 
 `container/list` was re-encoded to verify on Z3 4.16: it moved its ownership
 from indices to a set, which removed a matching loop; see
@@ -64,8 +65,8 @@ arithmetic moved to `arith/` so the package can run with `--disableNL`, and its
 window lemmas rephrased to keep `seq(s)` out of a fragmented heap. Five of its
 six members became cheap enough to be immune (four of the five chops finish in
 under half a minute), and `IndexRabinKarpBytes` went from failing on every run
-to failing on roughly one in three. That is an improvement, not a fix, and CI
-will be flaky on this package until the regression below is addressed upstream.
+to failing on one of four. That is an improvement, not a fix, and CI will be
+flaky on this package until the regression below is addressed upstream.
 It was always the narrower of the two: it already failed on Z3 4.13.4, one patch
 release before `container/list` used to break.
 

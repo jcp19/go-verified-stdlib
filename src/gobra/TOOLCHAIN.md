@@ -3,14 +3,19 @@
 The CI workflow (`.github/workflows/gobra.yml`) runs `viperproject/gobra-action`,
 which verifies with the `ghcr.io/viperproject/gobra:latest` image. The image
 bakes in both the Gobra build and the Z3 binary, so the packages here are
-verified against whatever Z3 that image ships. This file records what that
-choice costs, because it is not neutral: **the packages in this repository are
-sensitive to the Z3 version, and to one Z3 option in particular.**
+verified against whatever Z3 that image ships.
+
+**As things stand, all three packages verify on Z3 4.16.0** (and on 4.8.7 and
+4.13.0). Getting there was not free, though, and the rest of this file records
+why: the packages here used to be sensitive to the Z3 version, and to one Z3
+option in particular, and two of them had to be re-encoded to stop being so.
+Anyone changing their proofs should know which cliffs are nearby.
 
 ## The Z3 4.14 regression
 
 Gobra commit `9279c48` raised Z3 from 4.8.7 to 4.16.0, and `4587196` updated
-Viper to 2026.8. After those two commits the verified packages no longer verify.
+Viper to 2026.8. After those two commits the verified packages, as they then
+stood, no longer verified.
 
 The Viper update is not the cause. Every measurement below uses the *same*
 Gobra build — `4587196`, i.e. with Viper 2026.8 and the new quantified-permission
@@ -39,14 +44,18 @@ changes needed:
 
 | Package | Z3 4.13.0 | Z3 4.16.0, as this repo stood | Z3 4.16.0, now |
 |---|---|---|---|
-| `sort` | 0 errors, 8 s | 0 errors, 7 s | 0 errors, 7 s |
-| `container/list` | 0 errors, 326 s | aborted: prover crash | **0 errors, 122-204 s** |
-| `internal/bytealg` | 0 errors, 1171 s | 1 error, 1163 s | 1 error |
+| `sort` | 0 errors, 8 s | 0 errors, 7 s | **0 errors, 8 s** |
+| `container/list` | 0 errors, 326 s | aborted: prover crash | **0 errors, 122-217 s** |
+| `internal/bytealg` | 0 errors, 1171 s | 1 error, 1163 s | **0 errors, 1121 s** |
 
-`container/list` has since been re-encoded to verify on Z3 4.16 as well; see
-`../container/list/VERIFICATION.md` for what changed and why. `internal/bytealg`
-has not, and is the narrower of the two: it already fails on Z3 4.13.4, one
-patch release before `container/list` used to break.
+Both packages have since been re-encoded to verify on Z3 4.16 as well, so
+nothing in this repository depends on the Z3 version any more. `container/list`
+moved its ownership from indices to a set, which removed a matching loop; see
+`../container/list/VERIFICATION.md`. `internal/bytealg` made its recursive
+abstractions `opaque` and moved its non-linear arithmetic into `arith/`, so that
+it can be verified with `--disableNL`; see `../internal/bytealg/GOBRA.md`. It
+was the narrower of the two: it already failed on Z3 4.13.4, one patch release
+before `container/list` used to break.
 
 On the whole package the divergence is not merely slow. `move` and `remove`
 grow a single Z3 process past 7.5 GB until the kernel kills it, and Silicon
@@ -117,7 +126,7 @@ or in Gobra's pinned `Z3_VERSION` (`workflow-container/Dockerfile`), for which
 `internal/bytealg` wants the opposite. Its Rabin-Karp proofs are nonlinear
 (`pow * PowRK(sq, i) == PowRK(PrimeRK, len(sep))`), and solver 6 is weaker than
 solver 2 on nonlinear multiplication. On Z3 4.16.0 with `smt.arith.solver=6`
-`container/list` is green but `bytealg` fails two loop invariants it discharges
+`container/list` is green but `bytealg` failed two loop invariants it discharged
 under solver 2:
 
 ```
@@ -126,12 +135,12 @@ bytealg.go:108:12 Loop invariant might not be preserved.
                   pow*PowRK(sq, i) == PowRK(PrimeRK, len(sep)) might not hold
 ```
 
-So `smt.arith.solver` is a trade-off between the two packages here, not a
-setting that can simply be flipped. `IndexRabinKarpBytes` is also the single
+So `smt.arith.solver` was a trade-off between the two packages here, not a
+setting that could simply be flipped. `IndexRabinKarpBytes` is also the single
 most expensive member in the repository (~19 min of the ~20 min package run,
-98.6% of its total), which leaves it with little margin: which of its
-obligations falls over changes with the Z3 build. Across the configurations
-measured it failed at three different places —
+98.6% of its total), which left it with little margin: which of its obligations
+fell over changed with the Z3 build. Across the configurations measured it
+failed at three different places —
 
 | Configuration | `internal/bytealg` |
 |---|---|
@@ -144,17 +153,24 @@ measured it failed at three different places —
 — which is the signature of a member sitting on its budget rather than of a
 proof that is actually wrong.
 
-Raising `assert_timeout` does not fix it, though, and neither does anything else
-reachable from configuration or annotations; `../internal/bytealg/GOBRA.md`
-records the sweep, including that four identical runs report two different
-failures, so the package is unstable rather than merely slow.
+Raising `assert_timeout` did not fix it either, and neither did anything else
+reachable from configuration; `../internal/bytealg/GOBRA.md` records the sweep,
+including that four identical runs reported two different failures, so the
+package was unstable rather than merely slow.
 
-The one promising route left is per-member solver selection: `smt.arith.solver=6`
-breaks `bytealg` in `HashStrBytes`/`HashStrRevBytes`, whose invariants are
-nonlinear, but not in `IndexRabinKarpBytes`, which is the slow member. Gobra has
-the syntax (`#backend[proverConfigArgs(...)]`) and Silicon reads it, but Gobra
-stringifies multi-token annotation values as a Scala collection, so the option
-never arrives intact. That is a small upstream fix with a large payoff here.
+What fixed it was proof engineering rather than configuration, and it sidesteps
+`smt.arith.solver` entirely: `internal/bytealg` no longer asks the solver to do
+non-linear arithmetic at all. Its recursive abstractions are `opaque`, and its
+non-linear facts come from `arith/`, a small package verified normally and
+imported; the package itself runs with `--disableNL`. That took four of its five
+chops from ~20 minutes to 24 seconds and made the expensive member verify.
+
+Per-member solver selection would still be useful — `smt.arith.solver=6` breaks
+`bytealg` in `HashStrBytes`/`HashStrRevBytes`, whose invariants are non-linear,
+but not in `IndexRabinKarpBytes`, which is the slow member. Gobra has the syntax
+(`#backend[proverConfigArgs(...)]`) and Silicon reads it, but Gobra stringifies
+multi-token annotation values as a Scala collection, so the option never arrives
+intact. That is a small upstream fix, though no longer a blocking one here.
 
 ## Reproducing locally
 
@@ -218,15 +234,22 @@ REAL_Z3=/usr/local/bin/z3 Z3_SUBS="smt.arith.solver=6" Z3_EXE=./z3proxy.py \
 
 ## What was ruled out
 
-None of Gobra's own knobs rescue `*List.move` on Z3 4.16.0 — each still hit a
-420 s cap where the member takes 34 s on Z3 4.8.7:
+This is about `container/list` as it stood before its re-encoding. None of
+Gobra's own knobs rescued `*List.move` on Z3 4.16.0 — each still hit a
+420 s cap where the member took 34 s on Z3 4.8.7:
 
 - `--moreJoins all`
 - `--disableNL`
 - `--conditionalizePermissions`
 - `--mceMode=off`
 
-Neither does proof engineering at the obvious spot: removing `move`'s
+Neither did proof engineering at the obvious spot: removing `move`'s
 pairwise-distinctness assertion, whose two-variable multi-pattern
-`{es0[i1], es0[i2]}` was the natural suspect for a quantifier blow-up, changes
-nothing. The cost is in the arithmetic solver, not in this package's triggers.
+`{es0[i1], es0[i2]}` was the natural suspect for a quantifier blow-up, changed
+nothing. What did work was changing the encoding rather than the knobs, in both
+packages: `container/list` moved its ownership off the index quantifiers that
+were looping, and `internal/bytealg` took the non-linear arithmetic out of the
+solver's hands. Note that `--disableNL` appears in this list as something that
+did *not* help `container/list` and is nevertheless what `internal/bytealg`
+now runs with — it is a flag that pays off only once a package's non-linear
+facts are supplied as lemmas, and costs nothing in a package that has none.

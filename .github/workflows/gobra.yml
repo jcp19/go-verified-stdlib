@@ -14,13 +14,12 @@ jobs:
         uses: actions/checkout@v5
 
       # Gobra runs in config file mode: all of its options come from
-      # src/gobra-mod.json (module-wide) and src/sort/gobra.json (package).
+      # src/gobra-mod.json (module-wide) and the per-package gobra.json files.
       #
-      # The Gobra image also supplies Z3, and the packages here do not verify
-      # with the Z3 that `latest` currently ships (4.16.0). See
-      # src/gobra/TOOLCHAIN.md: the regression is in Z3 >= 4.14.0, everything
-      # verifies on 4.13.0, and the fix belongs in Silicon or in Gobra's pinned
-      # Z3 version rather than in this repository.
+      # The Gobra image also supplies Z3. All three packages verify on the Z3
+      # that `latest` currently ships (4.16.0), but they are sensitive to the
+      # version and two of them had to be re-encoded to stop being so; see
+      # src/gobra/TOOLCHAIN.md before changing their proofs.
       - name: Verify package sort
         uses: viperproject/gobra-action@main
         with:

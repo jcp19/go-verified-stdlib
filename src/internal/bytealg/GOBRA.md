@@ -29,6 +29,9 @@ The Gobra sources are split by role:
 | `lemmas.gobra` | the lemmas that discharge proofs about those definitions |
 | `assumptions.gobra` | the trusted members (see Trusted assumptions) |
 
+The non-linear arithmetic lives outside the package, in `../../gobra/arith`,
+so that this one can be verified with `--disableNL`; see below.
+
 The abstractions (`spec.gobra`) are: `RKHashRange`/`RKHash` (Rabin-Karp hash of
 a byte-sequence range), `RKHashRevRange`/`RKHashRev` (hash of the reversed
 range), `RKHashStr`/`RKHashStrRev` (the analogues over string ranges), `PowRK`
@@ -71,13 +74,20 @@ The byte-slice functions additionally take a ghost fractional permission
 parameter `p` and preserve `acc(sep, p)` (and `acc(s, p)`), following the
 usual Gobra convention for read-only slice arguments.
 
-## Z3 version sensitivity
+## Non-linear arithmetic, opaque abstractions, and Z3 versions
 
-`IndexRabinKarpBytes` is by far the most expensive member here: about 20 minutes
-of a ~20 minute package run. That leaves it no margin, and on Z3 >= 4.14 it no
-longer fits its `assert_timeout`. The symptom is a verification error, but it is
-a budget symptom rather than a hole in the proof: which obligation falls over
-moves with the Z3 build and with the budget --
+The package is verified with **`--disableNL`** (set in `gobra.json`), and its
+five recursive abstractions are **`opaque`**. Both are load-bearing: without
+them this package takes about twenty minutes and, on Z3 >= 4.14, does not
+verify at all.
+
+### The problem
+
+`IndexRabinKarpBytes` was ~97% of the package's cost, which left it no margin.
+On Z3 >= 4.14 it stopped fitting its `assert_timeout`. The symptom was a
+verification error, but it was a budget symptom rather than a hole in the
+proof: which obligation fell over moved with the Z3 build, with the budget,
+and even between identical runs.
 
 | Configuration | reported failure |
 |---|---|
@@ -87,57 +97,122 @@ moves with the Z3 build and with the budget --
 | Z3 4.16.0, 90000 | loop invariant `h == RKHashRange(seq(s), i-n, i)` |
 | Z3 4.16.0, 200000 | none reported; runs past 40 min without finishing |
 
-Raising `assert_timeout` therefore does not fix it -- it moves the failure and
-triples the runtime -- and neither does a finer `chop`, because the chopper
-splits *across* members while this member needs all of its lemmas regardless.
-
-It is also **not deterministic**. Four runs of the identical tree and config
-(Z3 4.16.0, `chop` 5, `assert_timeout` 30000) reported two different failures:
-
-| run | time | reported failure |
-|---|---|---|
-| 1 | 1163 s | `bytealg.go:212`, precondition of `lemmaNoMatchExtendWindow` |
-| 2 | 912 s | `bytealg.go:155`, postcondition `res != -1 ==> NoMatchBefore(...)` |
-| 3 | 889 s | `bytealg.go:155` |
-| 4 | 1014 s | `bytealg.go:212` |
-
+Four runs of the identical tree and config (Z3 4.16.0, `chop` 5,
+`assert_timeout` 30000) reported two different failures, taking 889-1163 s.
 Silicon's state-saturation timeouts are wall-clock, so on a loaded machine the
-outcome moves. Two consequences: a single green run would not be evidence that a
-change works, and even a change that usually passed would make CI flaky.
+outcome moves: a single green run would not have been evidence that a change
+worked.
 
-### What has been tried without touching the implementation
+Nothing reachable from configuration helped -- a finer `chop`, a larger
+`assert_timeout` (which moves the failure and triples the runtime), and
+`#backend[exhaleMode(0)]` / `#backend[moreJoins(all)]` on the member all
+failed. `#backend[proverConfigArgs(smt.arith.solver=6)]` is blocked by a Gobra
+bug; see the note at the end of this section.
 
-| Approach | Result |
+### `opaque`: the four cheaper members
+
+Making `RKHashRange`, `RKHashRevRange`, `RKHashStr`, `RKHashStrRev` and
+`MatchesAtRange` opaque took four of the package's five chops from about
+twenty minutes to **about twenty seconds**. With their definitions visible the
+solver instantiates them throughout the Rabin-Karp proofs; behind `opaque` it
+only knows what the contracts say.
+
+Two things keep `reveal` out of `bytealg.go`, where a proof step in a `//@`
+comment is much harder to read than a lemma call:
+
+- **base cases as postconditions.** `ensures lo == hi ==> res == 0` is visible
+  to callers even though the body is not, so an empty range needs no unfolding
+  at all. This is what establishes the hashing loops' invariants on entry.
+- **step lemmas.** `lemmaRKHashRangeStep` and its three siblings hand a client
+  the single unfolding of the recursive equation, which is all a proof walking
+  a range one byte at a time ever needs.
+
+### `--disableNL`: `IndexRabinKarpBytes`
+
+`opaque` alone did not help the expensive member: it still took twenty minutes
+and still failed. What fixed it was taking the non-linear arithmetic out of
+the solver's hands. The package is verified with `--disableNL`, which makes Z3
+leave products of non-constants alone, and every non-linear fact it needs is
+proved once in `../../gobra/arith` -- a small package verified normally, with
+non-linear arithmetic on -- and imported. That member's chop now finishes in
+about twenty seconds.
+
+Writing those lemmas takes one specific discipline, which is worth stating
+because it is not obvious and cost several attempts to find:
+
+> **With `smt.arith.nl false`, Z3 does no congruence reasoning under a product
+> at all.** An equality between two factors does not cross a multiplication:
+> from `h == pe*x + r` the solver will not get to `h*b == (pe*x + r)*b`, and
+> from `pow == PowRK(PrimeRK, n)` it will not get to
+> `pow*y == PowRK(PrimeRK, n)*y`. Worse, each such step can be provable on its
+> own and the chain still fail, because the solver gives up once a proof needs
+> several of them at once over the same non-linear monomial.
+
+So an `arith` lemma is useless if its conclusion is phrased in terms the caller
+does not already hold verbatim. Every one of them therefore takes its operands
+as *parameters* constrained by preconditions, rather than writing `Pow(b, e)`
+inside the conclusion, so that instantiating it yields the caller's own terms
+and leaves nothing to rearrange:
+
+| Shape | What it is for |
 |---|---|
-| `chop` 5 -> 12 | no change; the chopper splits across members |
-| `assert_timeout` 90000 | fails elsewhere after 36 min |
-| `assert_timeout` 200000 | no failure reported; runs past 40 min |
-| `#backend[exhaleMode(0)]` on the member | fails, 1273 s |
-| `#backend[moreJoins(all)]` on the member | fails, 1294 s |
-| `#backend[proverConfigArgs(smt.arith.solver=6)]` | **blocked by a Gobra bug**, below |
-| extracting the address mapping into a lemma | fails, 1099 s, and loses the `res != -1 ==> NoMatchBefore(...)` postcondition |
+| `MulOneAt(p0, b, x)` | `b^0 * x == x`, the base case of the DropFirst lemmas |
+| `PowHornerStep(pe, pf, b, x, r, y, h, e)` | the whole rolling-hash identity, in one lemma, including the hash `h` being rolled |
+| `MulPow(a, b, e)` | `a * b^e` as a *function application* rather than a product |
+| `MulPowStep`, `MulPowStart`, `MulPowEnd` | the exponentiation-by-squaring loop, over `MulPow` |
+| `MulSubstFirst`, `MulSubstSecond` | congruence for a product, as a lemma |
 
-Not yet tried: making the seven recursive spec functions `opaque`. It is the one
-remaining annotation-only lever with a precedent -- `ElemSet` cost 565 s in
-`container/list` until it was made opaque -- but it means threading `reveal`
-through 19 lemmas, and the non-determinism above makes the result hard to
-validate.
+`MulPow` is the sharpest illustration. The squaring loops maintain
+`pow * sq^i == PrimeRK^len(sep)` while reassigning both `pow` and `sq`, and as
+a product that invariant cannot be re-established after the assignments -- that
+is exactly a substitution under a multiplication. Written as one function
+application, `PowRKMul(pow, sq, i)`, it is an ordinary uninterpreted term and
+the step is plain congruence. The loops also call their step lemma *after* the
+assignments, passing the pre-step values as ghost snapshots, so that the lemma
+speaks in the loop's own post-state terms.
+
+### Where it stands
+
+On Z3 4.16.0, with `chop` 5 and `assert_timeout` 30000:
+
+| | before | now |
+|---|---|---|
+| `HashStrBytes`, `HashStr`, `HashStrRevBytes`, `HashStrRev`, `IndexRabinKarp` | part of a ~20 min package run | 15-20 s each |
+| four of the five chops | ~20 min | **24 s** |
+| whole package | 889-1163 s, **1 error**, non-deterministic | 1121 s, **0 errors** |
+
+The remaining time is all in `IndexRabinKarpBytes`, which still has little
+margin: verified as a single unchopped task it exceeds its budget at
+`lemmaNoMatchExtendWindow` after ~18 minutes, and it is only the `chop 5`
+split that gets it through. The cost is in the window test, not in the
+arithmetic:
+
+| region (`assume false` walk-down of the loop body) | cumulative |
+|---|---|
+| loop body vacuous | 62 s |
+| + the hash-roll arithmetic | 137 s |
+| + `lemmaRKHashRangeRoll` | 59 s |
+| + the address-mapping assert | 195 s |
+| + the `Equal` test and `lemmaMatchesAtWindow` | 940 s |
+
+so that is where any further work on this package belongs. Extracting the
+address mapping into a lemma does cut the member (1195 s -> 760 s in a sliced
+context) but loses a fact the inline assert supplies, so it is not a drop-in.
 
 ### The per-member prover option, and why it does not work yet
 
-The promising lever is per-member solver selection. `smt.arith.solver=6` fixes
-`container/list` and breaks `bytealg` -- but it breaks it in `HashStrBytes` and
-`HashStrRevBytes`, whose loop invariants are nonlinear, *not* in
-`IndexRabinKarpBytes`, which is the slow one. Setting the solver per member
-would give each the arithmetic it wants.
+One lever remains unavailable. `smt.arith.solver=6` (Z3's modern default;
+Silicon pins the legacy solver 2) is what `container/list` wants, and it breaks
+`bytealg` only in the hash functions, whose loops are non-linear -- not in
+`IndexRabinKarpBytes`. Setting it per member would give each the arithmetic it
+wants.
 
-Gobra has the syntax for it, `#backend[proverConfigArgs(...)]`, and Silicon
-reads the annotation. But `visitSingleBackendAnnotation` in
-`ParseTreeTranslator.scala` builds the value with
-`visit(ctx.backendAnnotationEntry).toString`, and the grammar rule
-`backendAnnotationEntry: ~('('|')'|',')+` matches a *sequence* of tokens, so a
-value that is not a single token is stringified as a Scala collection. The
-emitted Viper is
+Gobra has the syntax, `#backend[proverConfigArgs(...)]`, and Silicon reads the
+annotation. But `visitSingleBackendAnnotation` in `ParseTreeTranslator.scala`
+builds the value with `visit(ctx.backendAnnotationEntry).toString`, and the
+grammar rule `backendAnnotationEntry: ~('('|')'|',')+` matches a *sequence* of
+tokens, so a value that is not a single token is stringified as a Scala
+collection. The emitted Viper is
 
 ```
 @proverConfigArgs("Vector(smt, ., arith, ., solver, =, 6)")
@@ -146,24 +221,8 @@ emitted Viper is
 and quoting does not help -- `proverConfigArgs("smt.arith.solver=6")` emits
 `@proverConfigArgs(""smt.arith.solver=6"")`, whose `=` split yields an option
 name with a leading quote. Single-token values are unaffected, which is why
-`exhaleMode(0)` and `moreJoins(all)` emit correctly. Fixing that stringification
-upstream would make per-member solver selection usable, and is the most
-promising route left for this package.
-
-An `assume false` walk-down of the main loop body, at `assert_timeout` 30000,
-puts the cost here:
-
-| region | cumulative |
-|---|---|
-| loop body vacuous | 62 s |
-| + the hash-roll arithmetic | 137 s |
-| + `lemmaRKHashRangeRoll` | 59 s |
-| + the address-mapping assert | 195 s |
-| + the `Equal` test and `lemmaMatchesAtWindow` | 940 s |
-
-so the window test dominates, and the address mapping is second. Extracting the
-address mapping into a lemma does cut the member (1195 s -> 760 s in a sliced
-context) but loses a fact the inline assert supplies, so it is not a drop-in.
+`exhaleMode(0)` and `moreJoins(all)` emit correctly. That is a small upstream
+fix.
 
 ## Trusted assumptions
 
@@ -229,10 +288,12 @@ The implementation logic is unchanged. The full list of code-level edits:
   are not verified; `Equal`'s contract is trusted (see above).
 - **Cost of the `IndexRabinKarpBytes` contract.** The search-correctness
   conjuncts are what the package's verification time is spent on:
-  `IndexRabinKarpBytes` alone is ~97% of it, and the package went from 54s
-  without them to 6–13 minutes with them, with a large spread between runs of
-  the same source. That is comfortable against the CI job's 1h timeout but
-  leaves little appetite for adding more to this member.
+  `IndexRabinKarpBytes` alone is ~97% of it. Everything else in the package
+  verifies in about twenty seconds; that member takes the remaining ~18
+  minutes. That is comfortable against the CI job's 1h timeout but leaves
+  little appetite for adding more to this member. See the section on
+  non-linear arithmetic above for what the two encodings that got it to
+  verify at all were, and for where its remaining time goes.
 
 ## What made the search-correctness proof go through
 
@@ -389,23 +450,23 @@ silicon --numberOfParallelVerifiers 1 --logLevel ERROR \
 
 - Config: `src/gobra-mod.json` (module `std`, `only_files_with_header`,
   `require_triggers`, experimental friend clauses) plus the package-local
-  `src/internal/bytealg/gobra.json`, which sets `assert_timeout` and
-  `chop: 5`. Chopping splits the package into at most five Viper programs with
-  smaller contexts: measured 331s / 378s / 728s against 738s / 756s / 765s
-  without it. Given the spread that is suggestive rather than conclusive, but
-  it never measured worse and costs nothing to carry.
+  `src/internal/bytealg/gobra.json`, which sets `assert_timeout`, `chop: 5`
+  and `disableNL`. Chopping splits the package into at most five Viper
+  programs with smaller contexts, and here it is not an optimisation but a
+  requirement: `IndexRabinKarpBytes` verified as a single unchopped task
+  exceeds its budget after ~18 minutes.
 - CI: the `Gobra` workflow verifies the package with
   `viperproject/gobra-action` in config-file mode.
-- Local runs: `java -jar gobra.jar --config <abs-path>/src/internal/bytealg`
-  with Z3 4.8.7. The config path must be absolute; a relative one is resolved
-  against the module root and fails with `File 'src/src/.' not found`.
-  The package verifies in 6–13 minutes, essentially all of it in
-  `IndexRabinKarpBytes`; the spread is run-to-run variance on the same source,
-  not a difference in what is checked.
+- Local runs: `java -jar gobra.jar --config <abs-path>/src/internal/bytealg`.
+  The config path must be absolute; a relative one is resolved against the
+  module root and fails with `File 'src/src/.' not found`. The package
+  verifies in about 19 minutes on Z3 4.16.0, essentially all of it in
+  `IndexRabinKarpBytes`.
 - Isolating that member for a shorter loop is worth the setup:
   `gobra -i <pkg>/bytealg.go@<line> <pkg>/*.gobra -I src/. -m std
   --onlyFilesWithHeader --requireTriggers --experimentalFriendClauses
-  --assertTimeout 30000` verifies only the chopper's slice for it. Note the
+  --disableNL --assertTimeout 30000` verifies only the chopper's slice for it
+  (`-I src src/gobra`, so that `arith` resolves). Note the
   slice is a *smaller* proof context than the whole package, so a member can
   verify in isolation and still time out in the package run — that happened
   here, and the fix was to shrink the context (see above), not to raise the

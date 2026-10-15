@@ -240,19 +240,25 @@ func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	//@ invariant NoMatchBefore(qs, qsep, i-n+1)
 	//@ decreases len(s) - i
 	for i := n; i < len(s); {
+		// (Gobra) The byte correspondence is established before the arithmetic,
+		// not after it. The lemma call below needs it, and it must come between
+		// the last assignment to h and that call as little as possible: the
+		// equation h == h0*PrimeRK + bi - pw*bo is pure program semantics, yet
+		// it only discharges reliably while it is the freshest thing in the
+		// context -- with one assert in between it goes over the assert budget.
+		//@ assert qs[i-n] == s[i-n] && qs[i] == s[i]
+		//@ ghost h0 := h
 		h *= PrimeRK
 		h += uint32(s[i])
 		h -= pow * uint32(s[i-n])
-		//@ assert qs[i-n] == s[i-n] && qs[i] == s[i]
-		// (Gobra) Under --disableNL the solver will not replace equals by
-		// equals under a product, so knowing pow == PowRK(PrimeRK, n) is not
-		// enough to read the subtraction above as the roll lemma states it.
-		//@ lemmaMulSubstFirst(pow, PowRK(PrimeRK, n), uint32(s[i-n]))
 		// (Gobra) The roll step is proved before the test rather than at the end
 		// of the body, so that the test already knows h to be the hash of the
 		// window it is about to compare -- which is what refutes a match on the
-		// hash-mismatch path.
-		//@ lemmaRKHashRangeRoll(qs, n, i)
+		// hash-mismatch path. It goes through lemmaRKHashRangeRollAt, which takes
+		// the loop's own h0/h/pow and the two bytes as the loop read them, so the
+		// product rewriting happens inside the lemma rather than here; see
+		// lemmas.gobra.
+		//@ lemmaRKHashRangeRollAt(qs, n, i, h0, h, pow, uint32(s[i]), uint32(s[i-n]))
 		i++
 		// (Gobra) lo names i-n so the trigger below contains no arithmetic:
 		// Viper rejects {&s[i-n:i][k]} because ssliceFromSlice(s, i-n, i) has

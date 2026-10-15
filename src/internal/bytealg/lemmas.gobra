@@ -85,6 +85,18 @@ ensures   x*z == y*z
 decreases
 func lemmaMulSubstFirst(x, y, z uint32) { arith.MulSubstFirst(x, y, z) }
 
+// lemmaMulSubstSecond is the same for the right-hand factor. The rolling-hash
+// step needs both: the code subtracts pow*s[i-n], where pow is the loop's
+// variable and s[i-n] a heap read, while the roll lemma speaks of
+// PowRK(PrimeRK, n)*qs[i-n] over the pinned sequence. Rewriting one into the
+// other means replacing equals by equals on each factor in turn, and under
+// --disableNL neither substitution happens by itself.
+ghost
+requires  y == z
+ensures   x*y == x*z
+decreases
+func lemmaMulSubstSecond(x, y, z uint32) { arith.MulSubstSecond(x, y, z) }
+
 // lemmaPowRKOneMul: PrimeRK^0 * x == x. The empty-range base case of the
 // DropFirst lemmas below bottoms out in this.
 //
@@ -231,6 +243,35 @@ func lemmaRKHashRangeRoll(q seq[byte], n, i int) {
 	lemmaRKHashRangeDropFirst(q, i-n, i)
 	lemmaRKHashRangeStep(q, i-n+1, i+1)
 	lemmaPowRKHornerStep(uint32(q[i-n]), RKHashRange(q, i-n+1, i), uint32(q[i]), RKHashRange(q, i-n, i), n-1, n)
+}
+
+// lemmaRKHashRangeRollAt is the rolling-hash step stated over the values the
+// search loop actually holds: h0 the hash before the update, h after it, pw the
+// precomputed power, and bi/bo the incoming and outgoing bytes as the loop read
+// them from the slice.
+//
+// lemmaRKHashRangeRoll alone is not usable there. Its conclusion is an equation
+// between RKHashRange terms, and turning the loop's h into that shape needs the
+// outgoing byte's weight rewritten twice under a product -- from the heap read
+// bo to q[i-n], and from pw to PowRK(PrimeRK, n). Each step is available on its
+// own, and with --disableNL the solver still will not assemble them in one
+// query against the loop body's accumulated context: every operand has to be a
+// parameter so the work happens here, where the context is only this contract.
+//
+// This is what made the member fail intermittently rather than always: the
+// chain is one the solver can occasionally close by luck.
+ghost
+requires  0 < n && n <= i && i < len(q)
+requires  pw == PowRK(PrimeRK, n)
+requires  bi == uint32(q[i]) && bo == uint32(q[i-n])
+requires  h0 == RKHashRange(q, i-n, i)
+requires  h == h0*PrimeRK + bi - pw*bo
+ensures   h == RKHashRange(q, i-n+1, i+1)
+decreases
+func lemmaRKHashRangeRollAt(q seq[byte], n, i int, h0, h, pw, bi, bo uint32) {
+	lemmaRKHashRangeRoll(q, n, i)
+	lemmaMulSubstSecond(pw, bo, uint32(q[i-n]))
+	lemmaMulSubstFirst(pw, PowRK(PrimeRK, n), uint32(q[i-n]))
 }
 
 // lemmaRKHashRangePointwise: ranges that agree pointwise hash equally.

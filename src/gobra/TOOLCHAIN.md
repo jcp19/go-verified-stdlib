@@ -5,15 +5,15 @@ which verifies with the `ghcr.io/viperproject/gobra:latest` image. The image
 bakes in both the Gobra build and the Z3 binary, so the packages here are
 verified against whatever Z3 that image ships.
 
-**`sort` and `container/list` verify on Z3 4.16.0**, and did not before;
-`container/list` had to be re-encoded to get there. **`internal/bytealg` does
-not verify reliably**: of four repeat runs on identical source, three passed and
-one failed, and its one expensive member, `IndexRabinKarpBytes`, sits on its
-assert budget. Its
-proofs have been reworked twice (see `../internal/bytealg/GOBRA.md`) and the
-member is roughly three times cheaper than it was, but not cheap enough to be
-stable. Z3 4.13.0 still verifies everything here unchanged, so the underlying
-regression is the one described below, and the durable fix is upstream.
+**All three packages verify on Z3 4.16.0**, and none of them did before.
+`container/list` had to be re-encoded to get there; `internal/bytealg` needed
+three rounds of proof work, the last of which found that its rolling-hash step
+was never actually being proved -- the solver had been closing that gap by luck,
+which is what made the package pass most runs but not all. See
+`../internal/bytealg/GOBRA.md`. Z3 4.13.0 still verifies everything here
+unchanged and is much the cheaper configuration, so the regression described
+below is real and worth fixing upstream; it is no longer what stands between
+this repository and a green run.
 
 The rest of this file records why these packages are sensitive to the Z3
 version at all. Anyone changing their proofs should know which cliffs are
@@ -53,8 +53,8 @@ changes needed:
 | Package | Z3 4.13.0 | Z3 4.16.0, as this repo stood | Z3 4.16.0, now |
 |---|---|---|---|
 | `sort` | 0 errors, 8 s | 0 errors, 7 s | **0 errors, 8 s** |
-| `container/list` | 0 errors, 326 s | aborted: prover crash | **0 errors, 122-217 s** |
-| `internal/bytealg` | 0 errors, 1171 s | 1 error every run, 889-1163 s | **0 errors in 3 of 4 runs, 601-1105 s** |
+| `container/list` | 0 errors, 326 s | aborted: prover crash | **0 errors, 122-242 s** |
+| `internal/bytealg` | 0 errors, 1171 s | 1 error every run, 889-1163 s | **0 errors in 3 of 3 runs, 1806-2183 s** |
 
 `container/list` was re-encoded to verify on Z3 4.16: it moved its ownership
 from indices to a set, which removed a matching loop; see
@@ -64,9 +64,10 @@ from indices to a set, which removed a matching loop; see
 arithmetic moved to `arith/` so the package can run with `--disableNL`, and its
 window lemmas rephrased to keep `seq(s)` out of a fragmented heap. Five of its
 six members became cheap enough to be immune (four of the five chops finish in
-under half a minute), and `IndexRabinKarpBytes` went from failing on every run
-to failing on one of four. That is an improvement, not a fix, and CI will be
-flaky on this package until the regression below is addressed upstream.
+under half a minute), and `IndexRabinKarpBytes` went from failing on every
+run to passing on every run measured, once the unproved step in its rolling-hash
+update was supplied. It is about twice as slow as it was when it used to pass by
+luck, which leaves less margin against the job's 1h timeout.
 It was always the narrower of the two: it already failed on Z3 4.13.4, one patch
 release before `container/list` used to break.
 

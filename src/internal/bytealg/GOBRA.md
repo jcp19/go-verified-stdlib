@@ -240,6 +240,73 @@ recording so they are not retried blindly:
   smaller: it fails outright, and still fails with the assert budget raised to
   200 s, so the fact genuinely is not available that early.
 
+### The rolling-hash step was never actually proved
+
+The intermittency had a cause, and it was not the assert budget. The roll step
+in the search loop was not being discharged at all; the solver could sometimes
+close the gap by luck, which is exactly what "passes three runs in four" looks
+like, and why neither a bigger budget nor a finer chop ever made it reliable.
+
+It was found by asserting the chain one step at a time inside the loop body:
+
+| probe | assertion | result |
+|---|---|---|
+| S1 | `h0 == RKHashRange(qs, i-n, i)` (the invariant) | passes |
+| S2 | `h == h0*PrimeRK + uint32(s[i]) - pow*uint32(s[i-n])` (program semantics) | passes |
+| S3 | `pow*uint32(s[i-n]) == PowRK(PrimeRK, n)*uint32(qs[i-n])` | passes |
+| S4 | `uint32(s[i]) == uint32(qs[i])` | passes |
+| S5 | the roll lemma's own equation over `RKHashRange` | passes |
+| S6 | `h == RKHashRange(qs, i-n+1, i+1)` -- the conjunction of the above | **fails** |
+
+Every ingredient holds and the conclusion does not. Silicon's `assert` checks
+without assuming, so S6 has to re-derive all five in one query, and with
+`--disableNL` the solver will not assemble them: getting from the loop's `h`,
+which subtracts `pow*s[i-n]`, to the roll lemma's `PowRK(PrimeRK, n)*qs[i-n]`
+means rewriting the outgoing byte's weight **under a product twice** -- once
+from the heap read `s[i-n]` to the pinned `qs[i-n]`, once from `pow` to the
+power. Only the second was supplied.
+
+The contrast with `IndexRabinKarp` is the tell, and it had been visible all
+along: there `s` is a string, `RKHashStr(s, ...)` indexes the very `s` the code
+reads, so `uint32(s[i-n])` is the same term on both sides and one substitution
+suffices. That member has always verified in about twenty seconds. The byte
+version's sequence/heap-read mismatch is what adds the second rewriting, and
+the gap predates the `qs` pinning -- before it the mismatch was `s[i-n]`
+against `seq(s)[i-n]`, which needs the same two steps.
+
+`lemmaRKHashRangeRollAt` now states the step over the values the loop holds --
+`h0`, `h`, `pow`, and the two bytes as read from the slice -- so both rewritings
+happen inside the lemma, against its own contract, rather than against the loop
+body's accumulated context. Same "name every operand" shape as
+`lemmaPowRKHornerStep` and `lemmaPowRKMulStep`.
+
+Two placement details are load-bearing and commented at the call site: the byte
+correspondence is asserted *before* the arithmetic, and the lemma call follows
+the last assignment to `h` immediately. `h == h0*PrimeRK + bi - pw*bo` is pure
+program semantics and still only discharges reliably while it is the freshest
+thing in the context -- with a single `assert` in between it goes over budget.
+
+### What `outline` can and cannot do here
+
+An `outline` block was tried around the rolling-hash region, with a contract
+handing the rest of the body `h == RKHashRange(qs, i-n+1, i+1)`. It is a
+**regression**: the baseline failed at 227 s, the outlined version was killed
+after 20 minutes. The reason is that the outline's contract has to carry
+`acc(s, p/2)` in and out, so the boundary itself exhales and re-inhales the
+quantified permission and re-fragments the very snapshot the `qs` pinning
+exists to stabilise.
+
+Note also that an outline's contract is checked independently of its enclosing
+method, so it must restate `0 < p` to justify a `p/2` fraction and carry its own
+`decreases`; without those it fails as "Contract is not well-formed" and
+"Function might not terminate" rather than on anything to do with the proof.
+
+The region where an outline *would* pay -- the window test, which is where the
+remaining time goes -- cannot be outlined at all: it contains the `return i - n`,
+and Gobra rejects that ("outline statements must not contain return
+statements"). So outlining is structurally inapplicable to this member's
+bottleneck.
+
 ### Where it stands
 
 On Z3 4.16.0, with `chop` 5 and `assert_timeout` 30000:
@@ -248,16 +315,24 @@ On Z3 4.16.0, with `chop` 5 and `assert_timeout` 30000:
 |---|---|---|
 | `HashStrBytes`, `HashStr`, `HashStrRevBytes`, `HashStrRev`, `IndexRabinKarp` | part of a ~20 min package run | 15-20 s each |
 | four of the five chops | ~20 min | **24 s** |
-| whole package | 889-1163 s, **1 error every run** | 601-1105 s, **0 errors in 3 of 4 runs** |
+| whole package | 889-1163 s, **1 error every run** | 1806-2183 s, **0 errors in 3 of 3 runs** |
 
-That is a real improvement and it is **not a fix**. `IndexRabinKarpBytes` still
-sits on its assert budget: one of four repeat runs on identical source failed,
-and which obligation falls over still moves between runs (the loop invariant
-`h == RKHashRange(qs, i-n, i)` in one run, the window lemma's precondition in
-another). Verified as a single unchopped task it exceeds its budget regardless,
-so the `chop: 5` in `gobra.json` is a requirement, not an optimisation. CI will
-be flaky on this package until the Z3 regression is addressed upstream; Z3
-4.13.0 verifies it unchanged.
+With the rolling-hash gap closed the package verifies on every run measured:
+three of three, at 1806-2183 s. The spread is now 21%, where before it was
+1.8x (601-1105 s) -- consistent with the earlier runtime being dominated by
+whether the solver happened to close that gap.
+
+It is slower than the 601-1105 s the package took when it used to pass, which
+is the price of proving the step rather than relying on luck, and it leaves
+less margin against the CI job's 1h timeout. One measured lever was not taken
+up: passing `i-n` instead of the ghost `lo` to the hash-mismatch lemma took the
+isolated member from 227 s to 115 s before the roll fix landed, because it makes
+the precondition syntactically identical to the roll lemma's conclusion instead
+of needing congruence under the argument. It has not been re-measured since, so
+it is not in the tree.
+
+Verified as a single unchopped task the member still exceeds its budget, so the
+`chop: 5` in `gobra.json` remains a requirement, not an optimisation.
 
 The remaining cost, after the changes above, is the window test itself -- the
 `Equal` call, `lemmaMatchesAtWindow`, and the member's own postconditions over
@@ -363,9 +438,8 @@ The implementation logic is unchanged. The full list of code-level edits:
 - **Cost of the `IndexRabinKarpBytes` contract.** The search-correctness
   conjuncts are what the package's verification time is spent on:
   `IndexRabinKarpBytes` alone is ~97% of it. Everything else in the package
-  verifies in about half a minute; that member takes the remaining 10-18
-  minutes, and does not reliably fit its assert budget -- one of four repeat
-  runs failed. That is comfortable against the CI job's 1h timeout but
+  verifies in about half a minute; that member takes the remaining 30-36
+  minutes. That is comfortable against the CI job's 1h timeout but
   leaves no appetite at all for adding more to this member. See the sections
   above for the three reworkings it has had and where its remaining time goes.
 

@@ -525,6 +525,30 @@ func lemmaRKHashStrDropFirst(s string, lo, hi int) {
 	}
 }
 
+// lemmaRKHashStrRollAt is the string counterpart of lemmaRKHashRangeRollAt:
+// the rolling-hash step over the values the loop holds.
+//
+// The string version needs only one product rewriting rather than two, because
+// RKHashStr indexes the very string the code reads, so uint32(s[i-n]) is the
+// same term on both sides. It has always verified quickly for that reason. It
+// is routed through this lemma anyway: the conclusion still has to be assembled
+// from the invariant, the program semantics, the rewriting and the roll
+// equation in one query, which is precisely what failed in the byte version,
+// and here it succeeds only because a string carries no permissions or
+// reslices and the loop body's context stays small. That is luck of a milder
+// kind, and not worth keeping.
+ghost
+requires  0 < n && n <= i && i < len(s)
+requires  pw == PowRK(PrimeRK, n)
+requires  h0 == RKHashStr(s, i-n, i)
+requires  h == h0*PrimeRK + uint32(s[i]) - pw*uint32(s[i-n])
+ensures   h == RKHashStr(s, i-n+1, i+1)
+decreases
+func lemmaRKHashStrRollAt(s string, n, i int, h0, h, pw uint32) {
+	lemmaRKHashStrRoll(s, n, i)
+	lemmaMulSubstFirst(pw, PowRK(PrimeRK, n), uint32(s[i-n]))
+}
+
 // lemmaRKHashStrRoll is the string counterpart of lemmaRKHashRangeRoll: the
 // rolling-hash update step over a range of a string.
 ghost

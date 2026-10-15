@@ -313,13 +313,14 @@ func IndexRabinKarp(s, substr string) (res int) {
 	//@ invariant forall j int :: {StrMatchesAt(s, substr, j)} 0 <= j && j <= i-n ==> !StrMatchesAt(s, substr, j)
 	//@ decreases len(s) - i
 	for i := n; i < len(s); {
+		//@ ghost h0 := h
 		h *= PrimeRK
 		h += uint32(s[i])
 		h -= pow * uint32(s[i-n])
-		//@ ghost if 0 < n {
-		//@ 	lemmaMulSubstFirst(pow, PowRK(PrimeRK, n), uint32(s[i-n]))
-		//@ 	lemmaRKHashStrRoll(s, n, i)
-		//@ }
+		// (Gobra) As in IndexRabinKarpBytes: the step goes through a lemma that
+		// names every operand, so the product rewriting happens against that
+		// contract rather than against the loop body's context.
+		//@ ghost if 0 < n { lemmaRKHashStrRollAt(s, n, i, h0, h, pow) }
 		i++
 		//@ assert h == RKHashStr(s, i-n, i)
 		if h == hashss && s[i-n:i] == substr {

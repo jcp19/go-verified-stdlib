@@ -20,13 +20,20 @@
 // proved once here rather than rediscovered at every use site.
 package arith
 
-// Pow is exponentiation: Pow(b, e) == b^e, on uint32 and so wrapping, exactly
-// as repeated Go multiplication would.
+// Pow is exponentiation: Pow(b, e) == b^e.
+//
+// Everything in this package is stated over `integer`, Gobra's unbounded ghost
+// integer, rather than over a sized Go type. The facts here are facts of
+// mathematics, and a sized type would drag its bounds into every one of them --
+// each lemma would need a precondition constraining its arguments just to keep
+// its own conclusion well-defined. Callers convert at the boundary: a client
+// whose abstractions are uint32-valued, as internal/bytealg's are, passes
+// integer(x) and reads the result back through its own type.
 ghost
 requires 0 <= e
 decreases e
-pure func Pow(b uint32, e int) uint32 {
-	return e == 0 ? uint32(1) : Pow(b, e-1) * b
+pure func Pow(b integer, e integer) integer {
+	return e == 0 ? 1 : Pow(b, e-1) * b
 }
 
 // PowStep is Pow's defining equation. A caller verified with --disableNL cannot
@@ -36,18 +43,18 @@ ghost
 requires 0 < e
 ensures  Pow(b, e) == Pow(b, e-1) * b
 decreases
-func PowStep(b uint32, e int) {}
+func PowStep(b integer, e integer) {}
 
 // PowZero and PowOne are the base cases.
 ghost
-ensures Pow(b, 0) == 1
+ensures  Pow(b, 0) == 1
 decreases
-func PowZero(b uint32) {}
+func PowZero(b integer) {}
 
 ghost
-ensures Pow(b, 1) == b
+ensures  Pow(b, 1) == b
 decreases
-func PowOne(b uint32) {
+func PowOne(b integer) {
 	assert Pow(b, 1) == Pow(b, 0)*b
 	assert Pow(b, 0) == 1
 }
@@ -58,7 +65,7 @@ ghost
 requires 0 <= k
 ensures  Pow(b, 2*k) == Pow(b*b, k)
 decreases k
-func PowEven(b uint32, k int) {
+func PowEven(b integer, k integer) {
 	if k != 0 {
 		PowEven(b, k-1)
 		assert Pow(b, 2*k) == Pow(b, 2*k-1)*b
@@ -72,7 +79,7 @@ ghost
 requires 0 <= k
 ensures  Pow(b, 2*k+1) == Pow(b*b, k)*b
 decreases
-func PowOdd(b uint32, k int) {
+func PowOdd(b integer, k integer) {
 	PowEven(b, k)
 	assert Pow(b, 2*k+1) == Pow(b, 2*k)*b
 }
@@ -80,25 +87,25 @@ func PowOdd(b uint32, k int) {
 // MulComm, MulAssoc and MulComm3 are the rearrangements a caller with
 // --disableNL can no longer do for itself.
 ghost
-ensures x*y == y*x
+ensures  x*y == y*x
 decreases
-func MulComm(x, y uint32) {}
+func MulComm(x, y integer) {}
 
 ghost
-ensures (x*y)*z == x*(y*z)
+ensures  (x*y)*z == x*(y*z)
 decreases
-func MulAssoc(x, y, z uint32) {}
+func MulAssoc(x, y, z integer) {}
 
 ghost
-ensures x*y*z == x*z*y
+ensures  x*y*z == x*z*y
 decreases
-func MulComm3(x, y, z uint32) {}
+func MulComm3(x, y, z integer) {}
 
 // MulDistrib distributes a product over a sum.
 ghost
-ensures x*(y+z) == x*y + x*z
+ensures  x*(y+z) == x*y + x*z
 decreases
-func MulDistrib(x, y, z uint32) {}
+func MulDistrib(x, y, z integer) {}
 
 // The shapes below are the ones a Rabin-Karp style proof actually needs. Each
 // is a rearrangement its caller could do for itself with non-linear arithmetic
@@ -120,7 +127,7 @@ ghost
 requires p0 == Pow(b, 0)
 ensures  p0*x == x
 decreases
-func MulOneAt(p0, b, x uint32) {
+func MulOneAt(p0, b, x integer) {
 	PowZero(b)
 }
 
@@ -142,9 +149,17 @@ ghost
 requires 0 <= e
 requires pe == Pow(b, e) && pf == Pow(b, e+1)
 requires h == pe*x + r
+// The parentheses around (r*b + y) are deliberate, not stray grouping: they are
+// what the caller already holds. internal/bytealg's wrapper concludes
+// h*PrimeRK + y == PowRK(PrimeRK, f)*x + (r*PrimeRK + y), where r*b is the hash
+// of the rest of the range and y the byte being appended, so the right-hand
+// side is "the moved weight, plus the rest of the window". Dropping them is
+// sound arithmetic and still measured as a regression -- it leaves this
+// conclusion and the wrapper's in different shapes, and with --disableNL the
+// solver does not reliably bridge the two.
 ensures  h*b + y == pf*x + (r*b + y)
 decreases
-func PowHornerStep(pe, pf, b, x, r, y, h uint32, e int) {
+func PowHornerStep(pe, pf, b, x, r, y, h integer, e integer) {
 	PowStep(b, e+1)
 }
 
@@ -159,7 +174,7 @@ func PowHornerStep(pe, pf, b, x, r, y, h uint32, e int) {
 ghost
 requires 0 <= e
 decreases
-pure func MulPow(a, b uint32, e int) uint32 {
+pure func MulPow(a, b integer, e integer) integer {
 	return a * Pow(b, e)
 }
 
@@ -171,7 +186,7 @@ requires i%2 == 0 ==> a2 == a
 requires i%2 != 0 ==> a2 == a*b
 ensures  MulPow(a, b, i) == MulPow(a2, bb, j)
 decreases
-func MulPowStep(a, a2, b, bb uint32, i, j int) {
+func MulPowStep(a, a2, b, bb integer, i, j integer) {
 	if i%2 == 0 {
 		PowEven(b, j)
 	} else {
@@ -185,12 +200,12 @@ ghost
 requires 0 <= e
 ensures  MulPow(1, b, e) == Pow(b, e)
 decreases
-func MulPowStart(b uint32, e int) {}
+func MulPowStart(b integer, e integer) {}
 
 ghost
-ensures MulPow(a, b, 0) == a
+ensures  MulPow(a, b, 0) == a
 decreases
-func MulPowEnd(a, b uint32) {
+func MulPowEnd(a, b integer) {
 	PowZero(b)
 }
 
@@ -204,10 +219,10 @@ ghost
 requires x == y
 ensures  x*z == y*z
 decreases
-func MulSubstFirst(x, y, z uint32) {}
+func MulSubstFirst(x, y, z integer) {}
 
 ghost
 requires y == z
 ensures  x*y == x*z
 decreases
-func MulSubstSecond(x, y, z uint32) {}
+func MulSubstSecond(x, y, z integer) {}

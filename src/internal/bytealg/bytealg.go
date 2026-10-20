@@ -152,48 +152,64 @@ func HashStrRev(sep string) (rhash, rpow uint32) {
 // @ requires  len(sep) <= len(s)
 // @ preserves acc(s, p) && acc(sep, p)
 // @ ensures   res != -1 ==> 0 <= res && res <= len(s)-len(sep)
+// @ ensures   res != -1 ==> MatchesAt(seq(s), seq(sep), res)
+// @ ensures   res != -1 ==> NoMatchBefore(seq(s), seq(sep), res)
+// @ ensures   res == -1 ==> NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
 // @ decreases
 func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
 	// Rabin-Karp search
 	hashsep, pow := HashStrBytes(sep /*@ , p/2 @*/)
-	//@ assert hashsep == RKHash(seq(sep))
 	n := len(sep)
+	//@ assert hashsep == RKHashRange(seq(sep), 0, n)
 	var h uint32
 	//@ invariant 0 <= i && i <= n
 	//@ invariant acc(s, p/2) && acc(sep, p/2)
-	//@ invariant hashsep == RKHash(seq(sep)) && pow == PowRK(PrimeRK, n)
+	//@ invariant n == len(sep) && n <= len(s)
+	//@ invariant hashsep == RKHashRange(seq(sep), 0, n) && pow == PowRK(PrimeRK, n)
 	//@ invariant h == RKHashRange(seq(s), 0, i)
 	//@ decreases n - i
 	for i := 0; i < n; i++ {
 		h = h*PrimeRK + uint32(s[i])
 	}
-	//@ assert forall k int :: {&s[:n][k]} 0 <= k && k < n ==> &s[:n][k] == &s[k]
+	// (Gobra) The second trigger is what carries this fact into the window
+	// lemmas: the pointwise reasoning they do mentions seq(s)[k], never
+	// &s[:n][k], so with the address pattern alone it would never fire.
+	//@ assert forall k int :: {&s[:n][k]} {seq(s)[k]} 0 <= k && k < n ==> &s[:n][k] == &s[k]
+	//@ lemmaNoMatchBeforeZero(seq(s), seq(sep))
 	if h == hashsep && Equal(s[:n], sep) {
+		//@ lemmaMatchesAtWindow(s, seq(sep), 0, n, p/4)
 		return 0
 	}
-	//@ assert len(seq(s)) == len(s) && len(seq(sep)) == len(sep)
-	//@ invariant 0 < n
+	//@ lemmaNoMatchExtendWindow(s, seq(sep), 0, n, h, p/4)
+	//@ invariant 0 < n && n == len(sep)
 	//@ invariant n <= i && i <= len(s)
 	//@ invariant acc(s, p/2) && acc(sep, p/2)
-	//@ invariant hashsep == RKHash(seq(sep)) && pow == PowRK(PrimeRK, n)
+	//@ invariant hashsep == RKHashRange(seq(sep), 0, n) && pow == PowRK(PrimeRK, n)
 	//@ invariant h == RKHashRange(seq(s), i-n, i)
+	//@ invariant NoMatchBefore(seq(s), seq(sep), i-n+1)
 	//@ decreases len(s) - i
 	for i := n; i < len(s); {
 		h *= PrimeRK
 		h += uint32(s[i])
 		h -= pow * uint32(s[i-n])
+		//@ assert seq(s)[i-n] == s[i-n] && seq(s)[i] == s[i]
+		// (Gobra) The roll step is proved before the test rather than at the end
+		// of the body, so that the test already knows h to be the hash of the
+		// window it is about to compare -- which is what refutes a match on the
+		// hash-mismatch path.
+		//@ lemmaRKHashRangeRoll(seq(s), n, i)
 		i++
 		// (Gobra) lo names i-n so the trigger below contains no arithmetic:
 		// Viper rejects {&s[i-n:i][k]} because ssliceFromSlice(s, i-n, i) has
 		// an interpreted subtraction in it, but {&s[lo:i][k]} is a legal
 		// pattern.
 		//@ ghost lo := i - n
-		//@ assert forall k int :: {&s[lo:i][k]} 0 <= k && k < n ==> &s[lo:i][k] == &s[lo+k]
+		//@ assert forall k int :: {&s[lo:i][k]} {seq(s)[lo+k]} 0 <= k && k < n ==> &s[lo:i][k] == &s[lo+k]
 		if h == hashsep && Equal(s[i-n:i], sep) {
+			//@ lemmaMatchesAtWindow(s, seq(sep), lo, i, p/4)
 			return i - n
 		}
-		//@ assert seq(s)[i-1-n] == s[i-1-n] && seq(s)[i-1] == s[i-1]
-		//@ lemmaRKHashRangeRoll(seq(s), n, i-1)
+		//@ lemmaNoMatchExtendWindow(s, seq(sep), lo, i, h, p/4)
 	}
 	return -1
 }

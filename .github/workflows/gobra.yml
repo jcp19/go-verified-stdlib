@@ -30,6 +30,12 @@ jobs:
           configFile: 'src/internal/bytealg'
           timeout: 1h
 
+      - name: Verify package container/list
+        uses: viperproject/gobra-action@main
+        with:
+          configFile: 'src/container/list'
+          timeout: 1h
+
       - name: Verify package sync
         uses: viperproject/gobra-action@main
         with:

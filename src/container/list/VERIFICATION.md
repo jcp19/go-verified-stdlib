@@ -1,0 +1,164 @@
+# Gobra verification of container/list
+
+This package is fully verified with [Gobra](https://github.com/viperproject/gobra):
+memory safety, absence of panics, termination, and functional correctness of
+every method, with **no assumptions and no trusted members**. The unit tests of
+the package are reproduced as verified clients in `list_test.gobra`.
+
+## Abstraction
+
+A `List` carries its own abstraction in three ghost fields, read through pure
+getters defined in `spec.gobra`:
+
+- `Es() seq[*Element]` — the elements of the list, in list order,
+- `Vs() seq[any]` — the stored values (`Vs()[i]` is the value of `Es()[i]`),
+- `IsInit() bool` — whether the sentinel ring has been initialized (`Init`/
+  `lazyInit`). The zero `List` value gives empty sequences and `IsInit() == false`,
+  which is exactly the state `lazyInit` recognizes, so clients may use a zero
+  `List` directly.
+
+An element that belongs to no list is described by the pure function
+`e.Detached()` — `e.list == nil && e.next == nil && e.prev == nil`. No contract
+names a private field: `list`, `next` and `prev` appear only in the predicate
+body and in the private helper `move`.
+
+The two neighbour conjuncts are invisible to clients (`Next`/`Prev` return
+`nil` unconditionally for a detached element), but they are not free to drop:
+stating only `e.list == nil` leaves the caller of `Remove` holding an element
+with symbolic `next` and `prev`, which took the insert/remove test chain from
+1m44 to an assert timeout. Hiding the fields is the goal; weakening the
+contract is not.
+
+The predicate `l.Mem()` owns the list header and all elements and pins the
+doubly-linked sentinel ring to `Es()`. Because the abstraction lives in the
+receiver rather than in predicate parameters, contracts are mostly
+`preserves l.Mem()` plus sequence algebra over the getters, and call sites
+carry no ghost sequences at all:
+
+```go
+// @ preserves l.Mem()
+// @ ensures   l.Es() == old(l.Es()) ++ seq[*Element]{ret}
+// @ ensures   l.Vs() == old(l.Vs()) ++ seq[any]{v}
+func (l *List) PushBack(v any) (ret *Element)
+```
+
+so a test reads `l.PushBack(3)` rather than
+`l.PushBack(3, seq[*Element]{e1, e2}, seq[any]{1, 2}, true)`.
+
+Because Go's `container/list` is an intrusive structure whose elements are
+shared with clients, methods taking an element or mark still take two ghost
+parameters: the list that currently owns it and its index there. They support
+the three placements a caller can be in — the element belongs to `l`, belongs
+to another list (whose `Mem()` is passed along), or is detached and owned by
+the caller (`acc(e) && e.Detached()`, as after `Remove`). The no-op paths of
+the original code ("if e is not an element of l, the list is not modified")
+are covered by the latter two modes, and both are exercised by the upstream
+tests — `TestIssue4103` removes an element of `l1` from `l2`, `TestRemove`
+removes an already-removed element, and `TestMoveUnknownMark` passes a mark
+from another list — so neither can be ruled out by a precondition without
+losing behaviour the package documents. `lemmas.gobra` provides
+`DistinctLists` for clients that need to tell two lists apart.
+
+## Notable proof engineering
+
+- The linkage of consecutive elements is phrased as a two-variable
+  quantifier `forall i, k :: {l.es[i], l.es[k]} k == i+1 ==> ...` whose body
+  introduces **no new sequence-index terms**. An earlier formulation
+  (`es[i].next == es[i+1]` under trigger `{es[i]}`) let Z3 chain
+  instantiations along the sequence and made verification diverge.
+- A heap-dependent getter may be mentioned in a loop invariant, but the
+  predicate has to be listed **first**: `invariant l.Mem()` before any
+  `invariant ... l.Es() ...`. Silicon consumes invariant conjuncts left to
+  right, so a getter placed ahead of its own predicate cannot be framed.
+- A read-only method should ask for `acc(l.Mem(), R)`, not the whole
+  predicate: `Front`, `Back`, `Next` and `Prev` do. Keeping a share is not
+  only politeness towards callers — it is what makes "nothing changed" free.
+  A caller that retains a positive share frames the list itself, so these
+  methods carry **no** `ensures l.Es() == old(l.Es())` clause at all, and the
+  test file needed no changes when they were introduced. (An earlier revision
+  of this document called those clauses "the main cost of the ghost-field
+  design". That was wrong: they were a symptom of asking for `write`, not of
+  ghost fields.) A single package-wide `R` does not compose *within* the
+  package, though: a read-only helper holding exactly `acc(l.Mem(), R)` has
+  nothing left after calling `Front`, which asks for `R` too. That is why
+  `checkListLen`, `checkListPointers` and `checkList` in `list_test.gobra`
+  still take `preserves l.Mem()` and carry the "nothing changed" clauses; a
+  `ghost p perm` parameter with `requires p > 0` would fix it, at the cost of
+  threading `p` through the whole test file. `DistinctLists` is a different
+  case and genuinely needs write — two `R` shares sum well below 1, so they
+  are consistent with `a == b` and prove nothing.
+  Their postconditions index `old(l.Es())`, since the ghost
+  index names a pre-state position and the post-state length is unconstrained
+  once the framing clause is gone.
+- `Vs()` exports `len(res) == len(l.Es())` as a postcondition. The relation is
+  otherwise sealed inside the folded predicate, and without it every contract
+  that indexes into `Vs()` fails its well-formedness check.
+- Folds after pointer surgery are preceded by "breadcrumb" assertions that
+  name the neighbors of the affected elements and give the element-wise
+  mapping between old and new sequences.
+- The two `Push*List` loops track the position of the element being copied
+  **per mode**. Against a separate list the position is an index into that
+  list's own unchanging sequence; against `l` itself the position is tracked
+  purely inside `l`, where `Next`/`Prev`'s own postcondition re-establishes
+  it. Relating `l.Es()` back to the captured `oes0` instead — by a
+  sequence-suffix invariant — made `PushFrontList` diverge.
+- Pin the elements already in `l` with a **full-sequence equality against a
+  ghost accumulator**, not with a slice of `l.Es()`:
+
+  ```go
+  //@ invariant l.Es() == es0 ++ nes && len(nes) == len(oes0) - i   // cheap
+  //@ invariant l.Es()[:len(es0)] == es0                            // diverges
+  ```
+
+  The accumulator form is both stronger (it names the new elements, which
+  the methods return as a ghost result) and markedly cheaper: it avoids
+  Silicon's sequence-drop axioms. Swapping to it took the whole package from
+  a member that would not terminate to a 3m41s run.
+- `PushFrontList` prepends, so the ghost index handed to `Prev` in the loop
+  post-statement accounts for the one-position shift each round;
+  `PushBackList` appends and needs no shift.
+
+## Changes to the original Go code
+
+The implementation logic is unchanged. The only transformations, all
+permitted ones, are: the private field `len` is renamed to `length` (`len`
+is a Gobra keyword); three ghost fields are added to `List` inside a
+`/*@ … @*/` block, which the Go toolchain does not see; some intermediate
+results are stored in fresh local variables (e.g. `res := l.root.next;
+return res`) so proof annotations can be placed between the read and the use;
+return parameters are named; and `New` introduces a variable for `new(List)`.
+`go build`, `go vet` and `go test` still pass on the transformed code.
+
+## Tests (list_test.gobra)
+
+Every function of `list_test.go` is translated; `t.Errorf` calls become
+`assert` statements that are proven unreachable, so the tests hold for the
+specifications statically. Deviations, all semantics-preserving:
+
+- `TestList`, `TestExtending` and `TestMove` are split into sequential
+  continuation functions (`testListMoves`, `testExtendingBack`, …) because a
+  single long straight-line member is too expensive for the verifier.
+- Values later inspected with type assertions are written `int(1)` /
+  `string("banana")`: Gobra does not apply Go's default-type rule when an
+  untyped constant is boxed into `any`, so the dynamic type of a bare `1`
+  is unknown to the verifier. The Go meaning is identical.
+- Parallel swap assignments use explicit temporaries, and `checkList`
+  compares values with `===` instead of the `.(int)` type assertion.
+
+`example_test.go` is not translated (it exercises `fmt`, not the list).
+
+## Formatting
+
+`list.go` is `gofmt`-clean: gofmt rewrites `//@` into `// @`, and Gobra
+accepts that spelling, so the file passes both tools.
+
+## Running the verification
+
+```sh
+java -jar gobra.jar --config <repo>/src/container/list
+```
+
+(Requires Z3 on `Z3_EXE`.) The whole package verifies in about five minutes on
+4 cores. The most expensive members are the two `Push*List` loops, `move`, and
+the `testListInsert`/`testListInsertAfter` chains, whose proofs cross-case over
+element positions.

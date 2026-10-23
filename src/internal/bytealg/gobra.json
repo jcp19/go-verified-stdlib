@@ -1,4 +1,5 @@
 {
   "assert_timeout": 30000,
-  "chop": 5
+  "chop": 5,
+  "disableNL": true
 }

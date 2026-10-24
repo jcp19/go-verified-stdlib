@@ -1,7 +1,7 @@
 {
   "default_job_cfg": {
     "project_root": ".",
-    "includes": [".", "gobra/"],
+    "includes": ["gobra/", "."],
     "module": "std",
     "only_files_with_header": true,
     "require_triggers": true,

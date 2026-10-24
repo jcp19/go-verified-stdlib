@@ -1,0 +1,48 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// Package unsafe is a *specification-only* model of the compiler-provided
+// package unsafe.
+//
+// Gobra has no support for unsafe pointers, and this package does not add any:
+// it exists so that standard library files which merely *mention*
+// unsafe.Pointer still type-check. In practice those mentions sit on paths
+// that are statically dead under verification -- for instance the
+// `if race.Enabled { race.Acquire(unsafe.Pointer(m)) }` blocks of package
+// sync, which are unreachable because race.Enabled is the constant false.
+//
+// Pointer is modelled as the empty interface. That is deliberately *not* a
+// faithful model of an unsafe pointer -- no pointer arithmetic, no aliasing,
+// no conversion back to a typed pointer -- but it does make the one thing the
+// standard library needs, the conversion `unsafe.Pointer(x)`, type-check for
+// every x, exactly as Go's conversion rule for unsafe.Pointer does. Any code
+// that actually dereferences an unsafe.Pointer or converts one back cannot be
+// verified against this model, and will be rejected rather than silently
+// mis-verified.
+package unsafe
+
+// Pointer represents a pointer to an arbitrary type.
+type Pointer = interface{}
+
+// ArbitraryType is a stand-in for any Go type; it is not a real type.
+type ArbitraryType = interface{}
+
+// Sizeof returns the size in bytes occupied by the value v.
+ensures 0 <= res
+decreases
+pure func Sizeof(v ArbitraryType) (res uintptr)
+
+// Alignof returns the required alignment of a value of v's type.
+ensures 0 < res
+decreases
+pure func Alignof(v ArbitraryType) (res uintptr)
+
+// Offsetof returns the offset within the struct of the field that v
+// represents.
+ensures 0 <= res
+decreases
+pure func Offsetof(v ArbitraryType) (res uintptr)

@@ -1,0 +1,318 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// Package atomic is a *specification-only* model of the standard library
+// package sync/atomic.
+//
+// The implementations of these operations are written in architecture-specific
+// assembly (src/sync/atomic/asm.s and the runtime's intrinsics), so there is no
+// Go code to verify: the functions below are declared without a body, which
+// makes Gobra assume their contracts. They are the trusted base of every
+// fine-grained-concurrent proof that builds on them, so their contracts are
+// deliberately kept small and close to the informal documentation in
+// src/sync/atomic/doc.go.
+//
+// Every operation carries Gobra's `atomic` modifier, which marks it as
+// *physically atomic*: it takes a single logical machine step with no
+// observable intermediate state. That is what allows a caller to open an
+// invariant around it with a `critical` region:
+//
+//	critical Inv{x} (
+//	  unfold Inv{x}()
+//	  swapped = atomic.CompareAndSwapInt32(&x.f, 0, 1)
+//	  fold Inv{x}()
+//	)
+//
+// Modelling decisions and their consequences:
+//
+//   - The contracts describe *sequentially consistent* atomics. Go's memory
+//     model only guarantees that "the atomic operations execute in a total
+//     order consistent with the program order"; the operations here are
+//     assumed to be SC, which is what the Go implementations provide on every
+//     architecture Go supports and what Gobra's invariants require.
+//
+//   - Permissions. Every operation demands write access to the referenced
+//     location, except for the Load*/Swap* reads which are parameterised by a
+//     ghost permission amount `p`. Write access is the common case: the
+//     invariant that governs a shared location owns it completely, and it is
+//     the invariant that hands the permission to the critical region.
+//
+//   - Arithmetic. The Add* operations of sync/atomic wrap around on overflow.
+//     Wrap-around is *not* modelled: the contracts below require the caller to
+//     rule it out. Assuming exact arithmetic without that precondition would
+//     be unsound, because Gobra assumes that a value of a sized integer type
+//     always lies within the bounds of that type, so an overflowing addition
+//     with an exact postcondition lets one derive false. Callers that rely on
+//     wrap-around (for instance sync.WaitGroup, which subtracts by adding
+//     ^uint32(c-1)) cannot use these contracts.
+//
+//   - The parameters of CompareAndSwap* are named `oldv`/`newv` rather than
+//     `old`/`new` as in doc.go, and the result of Add*/Swap* is named `ret`
+//     rather than `new`/`old`: `old` and `new` are keywords in Gobra. Go
+//     callers pass arguments positionally, so the renaming is invisible to
+//     them.
+//
+//   - The package clause below says `atomics`, not `atomic`. `atomic` is a
+//     reserved word in Gobra (it is the modifier that marks a function as
+//     physically atomic), so neither `package atomic` nor a qualified use
+//     `atomic.CompareAndSwapInt32(...)` parses. Until that is fixed, a Go file
+//     that wants to be verified has to alias the import:
+//
+//     	import atomics "sync/atomic"
+//
+//     which is what src/sync/mutex.go does. The directory is still `sync/atomic`,
+//     so the import path is unchanged.
+//
+//   - The unsafe.Pointer variants (SwapPointer, CompareAndSwapPointer,
+//     LoadPointer, StorePointer) are deliberately absent. Gobra has no model of
+//     unsafe pointers, and giving them contracts over the placeholder model in
+//     src/gobra/unsafe would look like verification without being any.
+package atomics
+
+// The bounds of the sized integer types, spelled out because Gobra has no
+// model of package math yet.
+const (
+	minInt32  = -2147483648
+	maxInt32  = 2147483647
+	minInt64  = -9223372036854775808
+	maxInt64  = 9223372036854775807
+	maxUint32 = 4294967295
+	maxUint64 = 18446744073709551615
+)
+
+// ----------------------------------------------------------------------------
+// Swap
+// ----------------------------------------------------------------------------
+
+// SwapInt32 atomically stores newv into *addr and returns the previous *addr value.
+atomic
+preserves acc(addr)
+ensures   ret == old(*addr)
+ensures   *addr == newv
+decreases
+func SwapInt32(addr *int32, newv int32) (ret int32)
+
+// SwapInt64 atomically stores newv into *addr and returns the previous *addr value.
+atomic
+preserves acc(addr)
+ensures   ret == old(*addr)
+ensures   *addr == newv
+decreases
+func SwapInt64(addr *int64, newv int64) (ret int64)
+
+// SwapUint32 atomically stores newv into *addr and returns the previous *addr value.
+atomic
+preserves acc(addr)
+ensures   ret == old(*addr)
+ensures   *addr == newv
+decreases
+func SwapUint32(addr *uint32, newv uint32) (ret uint32)
+
+// SwapUint64 atomically stores newv into *addr and returns the previous *addr value.
+atomic
+preserves acc(addr)
+ensures   ret == old(*addr)
+ensures   *addr == newv
+decreases
+func SwapUint64(addr *uint64, newv uint64) (ret uint64)
+
+// SwapUintptr atomically stores newv into *addr and returns the previous *addr value.
+atomic
+preserves acc(addr)
+ensures   ret == old(*addr)
+ensures   *addr == newv
+decreases
+func SwapUintptr(addr *uintptr, newv uintptr) (ret uintptr)
+
+// ----------------------------------------------------------------------------
+// CompareAndSwap
+// ----------------------------------------------------------------------------
+
+// CompareAndSwapInt32 executes the compare-and-swap operation for an int32 value.
+atomic
+preserves acc(addr)
+ensures   swapped ==> old(*addr) == oldv && *addr == newv
+ensures   !swapped ==> old(*addr) != oldv && *addr == old(*addr)
+decreases
+func CompareAndSwapInt32(addr *int32, oldv int32, newv int32) (swapped bool)
+
+// CompareAndSwapInt64 executes the compare-and-swap operation for an int64 value.
+atomic
+preserves acc(addr)
+ensures   swapped ==> old(*addr) == oldv && *addr == newv
+ensures   !swapped ==> old(*addr) != oldv && *addr == old(*addr)
+decreases
+func CompareAndSwapInt64(addr *int64, oldv int64, newv int64) (swapped bool)
+
+// CompareAndSwapUint32 executes the compare-and-swap operation for a uint32 value.
+atomic
+preserves acc(addr)
+ensures   swapped ==> old(*addr) == oldv && *addr == newv
+ensures   !swapped ==> old(*addr) != oldv && *addr == old(*addr)
+decreases
+func CompareAndSwapUint32(addr *uint32, oldv uint32, newv uint32) (swapped bool)
+
+// CompareAndSwapUint64 executes the compare-and-swap operation for a uint64 value.
+atomic
+preserves acc(addr)
+ensures   swapped ==> old(*addr) == oldv && *addr == newv
+ensures   !swapped ==> old(*addr) != oldv && *addr == old(*addr)
+decreases
+func CompareAndSwapUint64(addr *uint64, oldv uint64, newv uint64) (swapped bool)
+
+// CompareAndSwapUintptr executes the compare-and-swap operation for a uintptr value.
+atomic
+preserves acc(addr)
+ensures   swapped ==> old(*addr) == oldv && *addr == newv
+ensures   !swapped ==> old(*addr) != oldv && *addr == old(*addr)
+decreases
+func CompareAndSwapUintptr(addr *uintptr, oldv uintptr, newv uintptr) (swapped bool)
+
+// ----------------------------------------------------------------------------
+// Add
+//
+// The `requires` clauses rule out the wrap-around that the implementations
+// perform; see the package comment.
+// ----------------------------------------------------------------------------
+
+// AddInt32 atomically adds delta to *addr and returns the new value.
+atomic
+requires  acc(addr)
+requires  minInt32 <= *addr + delta && *addr + delta <= maxInt32
+ensures   acc(addr)
+ensures   *addr == old(*addr) + delta
+ensures   ret == *addr
+decreases
+func AddInt32(addr *int32, delta int32) (ret int32)
+
+// AddUint32 atomically adds delta to *addr and returns the new value.
+//
+// Note that, unlike the implementation, this contract forbids the wrap-around
+// that clients such as sync.WaitGroup rely on to subtract from *addr.
+atomic
+requires  acc(addr)
+requires  *addr + delta <= maxUint32
+ensures   acc(addr)
+ensures   *addr == old(*addr) + delta
+ensures   ret == *addr
+decreases
+func AddUint32(addr *uint32, delta uint32) (ret uint32)
+
+// AddInt64 atomically adds delta to *addr and returns the new value.
+atomic
+requires  acc(addr)
+requires  minInt64 <= *addr + delta && *addr + delta <= maxInt64
+ensures   acc(addr)
+ensures   *addr == old(*addr) + delta
+ensures   ret == *addr
+decreases
+func AddInt64(addr *int64, delta int64) (ret int64)
+
+// AddUint64 atomically adds delta to *addr and returns the new value.
+atomic
+requires  acc(addr)
+requires  *addr + delta <= maxUint64
+ensures   acc(addr)
+ensures   *addr == old(*addr) + delta
+ensures   ret == *addr
+decreases
+func AddUint64(addr *uint64, delta uint64) (ret uint64)
+
+// AddUintptr atomically adds delta to *addr and returns the new value.
+atomic
+requires  acc(addr)
+ensures   acc(addr)
+ensures   *addr == old(*addr) + delta
+ensures   ret == *addr
+decreases
+func AddUintptr(addr *uintptr, delta uintptr) (ret uintptr)
+
+// ----------------------------------------------------------------------------
+// Load
+//
+// Loads are parameterised by a ghost permission amount, so that a location may
+// be read atomically while it is only partially owned.
+// ----------------------------------------------------------------------------
+
+// LoadInt32 atomically loads *addr.
+atomic
+requires  p > 0
+preserves acc(addr, p)
+ensures   val == *addr && *addr == old(*addr)
+decreases
+func LoadInt32(addr *int32, ghost p perm) (val int32)
+
+// LoadInt64 atomically loads *addr.
+atomic
+requires  p > 0
+preserves acc(addr, p)
+ensures   val == *addr && *addr == old(*addr)
+decreases
+func LoadInt64(addr *int64, ghost p perm) (val int64)
+
+// LoadUint32 atomically loads *addr.
+atomic
+requires  p > 0
+preserves acc(addr, p)
+ensures   val == *addr && *addr == old(*addr)
+decreases
+func LoadUint32(addr *uint32, ghost p perm) (val uint32)
+
+// LoadUint64 atomically loads *addr.
+atomic
+requires  p > 0
+preserves acc(addr, p)
+ensures   val == *addr && *addr == old(*addr)
+decreases
+func LoadUint64(addr *uint64, ghost p perm) (val uint64)
+
+// LoadUintptr atomically loads *addr.
+atomic
+requires  p > 0
+preserves acc(addr, p)
+ensures   val == *addr && *addr == old(*addr)
+decreases
+func LoadUintptr(addr *uintptr, ghost p perm) (val uintptr)
+
+// ----------------------------------------------------------------------------
+// Store
+// ----------------------------------------------------------------------------
+
+// StoreInt32 atomically stores val into *addr.
+atomic
+requires  acc(addr)
+ensures   acc(addr) && *addr == val
+decreases
+func StoreInt32(addr *int32, val int32)
+
+// StoreInt64 atomically stores val into *addr.
+atomic
+requires  acc(addr)
+ensures   acc(addr) && *addr == val
+decreases
+func StoreInt64(addr *int64, val int64)
+
+// StoreUint32 atomically stores val into *addr.
+atomic
+requires  acc(addr)
+ensures   acc(addr) && *addr == val
+decreases
+func StoreUint32(addr *uint32, val uint32)
+
+// StoreUint64 atomically stores val into *addr.
+atomic
+requires  acc(addr)
+ensures   acc(addr) && *addr == val
+decreases
+func StoreUint64(addr *uint64, val uint64)
+
+// StoreUintptr atomically stores val into *addr.
+atomic
+requires  acc(addr)
+ensures   acc(addr) && *addr == val
+decreases
+func StoreUintptr(addr *uintptr, val uintptr)

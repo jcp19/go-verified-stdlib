@@ -1,0 +1,65 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// Package race is a *specification-only* model of internal/race.
+//
+// internal/race has two implementations selected by the `race` build tag:
+// race.go, which forwards to the runtime's race detector, and norace.go, which
+// is a set of no-ops with `const Enabled = false`. Gobra does not evaluate
+// build tags, so this package models the norace build -- the one used by every
+// ordinary (non `-race`) build of the standard library.
+//
+// Setting Enabled to the constant false makes every `if race.Enabled { ... }`
+// block in the standard library statically dead, which is why the operations
+// below can carry `requires false`: reaching them is impossible, and any
+// attempt to call one outside such a block is reported rather than assumed
+// away.
+package race
+
+import "unsafe"
+
+const Enabled = false
+
+requires false
+decreases
+func Acquire(addr unsafe.Pointer)
+
+requires false
+decreases
+func Release(addr unsafe.Pointer)
+
+requires false
+decreases
+func ReleaseMerge(addr unsafe.Pointer)
+
+requires false
+decreases
+func Disable()
+
+requires false
+decreases
+func Enable()
+
+requires false
+decreases
+func Read(addr unsafe.Pointer)
+
+requires false
+decreases
+func Write(addr unsafe.Pointer)
+
+requires false
+decreases
+func ReadRange(addr unsafe.Pointer, n int)
+
+requires false
+decreases
+func WriteRange(addr unsafe.Pointer, n int)
+
+requires false
+decreases
+func Errors() int

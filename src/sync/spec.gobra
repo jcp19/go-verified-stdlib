@@ -1,0 +1,264 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+package sync
+
+// This file holds the ghost definitions of sync.Mutex: the ghost state that
+// mutex.go's annotations manipulate, the Iris-style invariant that governs the
+// shared state word, and the ghost members LockP/UnlockP/LockInv/SetInv that
+// make up the client-visible interface.
+//
+// The lemmas about the state word's bit layout live in lemmas.gobra, and
+// everything this development assumes lives in assumptions.gobra.
+//
+// The client-visible contracts of Lock and Unlock are taken *verbatim* from
+// Gobra's own model of the package, src/main/resources/stubs/sync/mutex.gobra,
+// so that code verified against the stub keeps verifying against the real
+// implementation.
+//
+//	pred (m *Mutex) LockP()
+//	pred (m *Mutex) UnlockP()
+//	pure func (m *Mutex) LockInv() pred()
+//	func (m *Mutex) SetInv(ghost inv pred())
+//	func (m *Mutex) Lock()
+//	func (m *Mutex) Unlock()
+//
+// LockP is the shareable right to use the mutex; every goroutine holds a
+// wildcard fraction of it. UnlockP is the exclusive right to unlock, handed to
+// whoever acquires the lock together with LockInv()(), the resource the mutex
+// protects.
+//
+// ----------------------------------------------------------------------------
+// The protocol
+//
+// mutex.go packs four fields into the single word m.state:
+//
+//	bit 0     mutexLocked     some goroutine holds the lock
+//	bit 1     mutexWoken      a waiter has been woken and is on its way in
+//	bit 2     mutexStarving   the mutex is in starvation mode
+//	bits 3..  waiter count
+//
+// The mutex is *logically free* -- meaning the protected resource sits inside
+// the invariant, available to be taken -- exactly when both mutexLocked and
+// mutexStarving are clear. mutexStarving counts as held because in starvation
+// mode ownership is handed from the unlocking goroutine directly to a waiter
+// through the semaphore, and while it is in flight neither of them has the
+// mutexLocked bit set.
+//
+// Three ghost tokens track who owns what. Each is a half-permission to a ghost
+// field, so that holding one is exclusive and its holder can read off the state
+// of the corresponding bit from the invariant:
+//
+//	gl   held by the goroutine that holds the lock; UnlockP() is exactly this
+//	     token. Out  <==>  mutexLocked is set.
+//	gw   the right to clear mutexWoken. Held by the goroutine whose local
+//	     variable `awoke` is true. Out  <==>  mutexWoken is set.
+//	gt   a quarter-permission per semaphore ticket; see below.
+//
+// and two invariant-owned flags record resources parked *inside* the invariant
+// on behalf of a semaphore ticket:
+//
+//	gh   an ownership handoff is parked: LockInv()() is in the invariant and
+//	     belongs to whoever redeems a ticket while starvation mode is on.
+//	gws  the gw token is parked: it belongs to whoever redeems a ticket while
+//	     starvation mode is off.
+//
+// ----------------------------------------------------------------------------
+// Why the semaphore payload is a bare ticket
+//
+// runtime_Semrelease is called from two places with two completely different
+// intentions: unlockSlow's normal path merely wakes a sleeper, while its
+// starving path hands over ownership of the mutex. A goroutine returning from
+// runtime_SemacquireMutex cannot tell which of the two woke it, so the
+// semaphore payload cannot be "ownership" and cannot be a disjunction either
+// (Viper has no disjunction of resources).
+//
+// So the payload is a bare ticket, semTicket(m) = acc(&m.gt, 1/4), and the
+// resource that the ticket entitles its bearer to stays parked in the
+// invariant, tagged by gws/gh. The bearer *disambiguates at redemption time*,
+// inside the critical region that reads the state word:
+//
+//   - it reads the state and finds mutexStarving clear. Then gh is false
+//     (a parked handoff forces starvation mode), so its ticket must be the
+//     parked gw token: it takes gw and continues as `awoke`.
+//   - it reads the state and finds mutexStarving set. Then mutexWoken is clear
+//     (starvation mode and mutexWoken are mutually exclusive) so gw is not out
+//     at all, hence gws is false, hence its ticket must be the parked handoff:
+//     it takes LockInv()() and owns the mutex.
+//
+// The counting is done with permissions. The invariant keeps acc(&m.gt, 1/2)
+// plus a quarter for each of gws and gh that is *false*, so a goroutine that
+// holds a ticket and opens the invariant would hold 5/4 of &m.gt if both flags
+// were false -- more than write permission, which is a contradiction. Hence at
+// least one of them is set, and the case analysis above pins down which.
+//
+// This is also what rules out two goroutines simultaneously believing they were
+// handed ownership, the step that would otherwise let two goroutines both add
+// mutexLocked to the state word.
+// ----------------------------------------------------------------------------
+
+// maxWaiters is the largest waiter count that fits in an int32 state word.
+// The Go implementation does not guard against exceeding it; see the
+// documented assumption in lockSlow.
+const maxWaiters = 268435455 // 2^28 - 1
+
+// ----------------------------------------------------------------------------
+// Decoding the state word
+//
+// Gobra encodes &, |, &^ and >> on non-constant operands as *uninterpreted*
+// functions -- it cannot even prove that & is commutative -- so nothing about
+// mutex.go's bit twiddling is available to the solver by default. The four
+// abstract functions below name the fields of a state word and bitsLemma
+// relates them, in one place, both to the arithmetic decomposition
+//
+//	s == locked + 2*woken + 4*starving + 8*waiters
+//
+// and to every bit expression that mutex.go actually evaluates.
+//
+// bitsLemma has no body, so its contract is *assumed*: it is the one place in
+// this development where Gobra takes something on faith, and every clause of it
+// is a concrete arithmetic identity that can be checked by inspection. Keeping
+// it to a single lemma is deliberate -- it is the whole trusted surface of the
+// bit-level reasoning.
+// ----------------------------------------------------------------------------
+
+ghost
+decreases _
+pure func bitLocked(s int32) int32
+
+ghost
+decreases _
+pure func bitWoken(s int32) int32
+
+ghost
+decreases _
+pure func bitStarving(s int32) int32
+
+ghost
+decreases _
+pure func numWaiters(s int32) int32
+
+// ----------------------------------------------------------------------------
+// Ghost state and the invariant
+// ----------------------------------------------------------------------------
+
+// semTicket is the payload of one unit of m's semaphore: a quarter of the
+// permission counter &m.gt. See the header comment.
+pred semTicket(m *Mutex) {
+	acc(&m.gt, 1/4)
+}
+
+// mutexInv is the invariant that governs the shared state word. It is
+// established once, by SetInv, and from then on may only be opened around a
+// single atomic operation.
+pred mutexInv(m *Mutex) {
+	// --- the resources the invariant owns ---
+	acc(&m.state) &&
+	acc(&m.gl, 1/2) && acc(&m.gw, 1/2) &&
+	acc(&m.gh) && acc(&m.gws) && acc(&m.gt, 1/2) &&
+	acc(&m.ghc, 1/2) &&
+	acc(&m.inv, _) &&
+	// the other half of a token, whenever that token is not out
+	(!m.gl ==> acc(&m.gl, 1/2)) &&
+	// gw is also fully owned while it is *parked* for a semaphore ticket
+	((!m.gw || m.gws) ==> acc(&m.gw, 1/2)) &&
+	// a quarter of the ticket counter for every payload that is *not* parked
+	(!m.gws ==> acc(&m.gt, 1/4)) &&
+	(!m.gh ==> acc(&m.gt, 1/4)) &&
+	(m.ghc == 0 ==> acc(&m.ghc, 1/2)) &&
+
+	// --- the state word ---
+	0 <= m.state && numWaiters(m.state) <= maxWaiters &&
+	// a token is out exactly when the corresponding bit is set
+	(m.gl == (bitLocked(m.state) == 1)) &&
+	(m.gw == (bitWoken(m.state) == 1)) &&
+	// starvation mode excludes mutexWoken, and always has a waiter to hand to
+	(bitStarving(m.state) == 1 ==> bitWoken(m.state) == 0) &&
+	(bitStarving(m.state) == 1 ==> numWaiters(m.state) > 0) &&
+	// a parked gw token exists only if gw is out at all
+	(m.gws ==> m.gw) &&
+	// ownership in flight -- parked (gh) or already claimed by a waiter that has
+	// not installed it yet (ghc) -- pins the mutex in starvation mode. While a
+	// claim is outstanding the waiter count can only grow, which is what lets the
+	// claimer subtract from it safely.
+	// m.ghc is 0 when no claim is outstanding, and otherwise the waiter count
+	// observed when the claim was made -- a lower bound that survives because
+	// only the claimer ever decrements the count, and it does so exactly once.
+	0 <= m.ghc &&
+	((m.gh || m.ghc != 0) ==> bitStarving(m.state) == 1 && bitLocked(m.state) == 0) &&
+	(m.ghc != 0 ==> m.ghc <= numWaiters(m.state)) &&
+	// at most one ownership transfer is in flight: parking a new handoff needs
+	// the gl token, and a claim keeps mutexLocked clear
+	(m.ghc != 0 ==> !m.gh) &&
+
+	// --- the protected resource ---
+	m.inv != none[pred()] &&
+	// in the invariant while the mutex is logically free ...
+	((bitLocked(m.state) == 0 && bitStarving(m.state) == 0) ==> get(m.inv)()) &&
+	// ... or parked for the waiter that redeems the handoff
+	(m.gh ==> get(m.inv)())
+}
+
+// ----------------------------------------------------------------------------
+// The client-visible ghost interface (contracts verbatim from Gobra's stub)
+// ----------------------------------------------------------------------------
+
+pred (m *Mutex) LockP() {
+	acc(&m.inv, _) &&
+	m.inv != none[pred()] &&
+	acc(semaphoreP(&m.sema), _) &&
+	semaphoreInv(&m.sema) == semTicket{m} &&
+	Invariant(mutexInv{m})
+}
+
+pred (m *Mutex) UnlockP() {
+	acc(&m.gl, 1/2) && m.gl
+}
+
+ghost
+requires acc(m.LockP(), _)
+decreases _
+pure func (m *Mutex) LockInv() pred() {
+	return unfolding acc(m.LockP(), _) in get(m.inv)
+}
+
+ghost
+requires inv() && acc(m) && *m == Mutex{}
+ensures  m.LockP() && m.LockInv() == inv
+decreases
+func (m *Mutex) SetInv(ghost inv pred()) {
+	m.inv = some(inv)
+	m.gl = false
+	m.gw = false
+	m.gh = false
+	m.ghc = 0
+	m.gws = false
+	m.gt = false
+	semaphoreSetInv(&m.sema, semTicket{m})
+	bitsOf(m.state, 0, 0, 0, 0)
+	fold mutexInv{m}()
+	EstablishInvariant(mutexInv{m})
+	fold m.LockP()
+}
+
+// lockPInv re-derives the pieces of LockP from a wildcard fraction of it.
+// LockP's body is duplicable (Invariant is pure, the rest are wildcards and
+// pure facts), so a wildcard fraction is as good as the whole predicate.
+ghost
+requires acc(m.LockP(), _)
+ensures  m.LockP()
+ensures  acc(&m.inv, _) && m.inv != none[pred()]
+ensures  acc(semaphoreP(&m.sema), _) && semaphoreInv(&m.sema) == semTicket{m}
+ensures  Invariant(mutexInv{m})
+ensures  m.LockInv() == get(m.inv)
+decreases
+func (m *Mutex) lockPInv() {
+	unfold acc(m.LockP(), _)
+	fold m.LockP()
+	unfold m.LockP()
+	fold m.LockP()
+}

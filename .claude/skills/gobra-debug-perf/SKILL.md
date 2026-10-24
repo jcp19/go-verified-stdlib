@@ -294,6 +294,11 @@ Interaction with prover yielded null` (an out-of-memory kill), more time is not
 the answer either — the proof annotations (and potentially the spec) have to
 change.
 
+If a much larger budget changes nothing, the failure is a genuine proof gap and
+stops being this skill's problem: `gobra-locate-failure` narrows it from "this
+member does not verify" down to one obligation, one statement and one missing
+fact.
+
 #### Invalid triggers: Gobra accepts patterns Viper rejects
 
 Gobra does not run Viper's consistency check, so a quantifier can carry a

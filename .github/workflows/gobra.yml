@@ -16,32 +16,51 @@ jobs:
       # Gobra runs in config file mode: all of its options come from
       # src/gobra-mod.json (module-wide) and the per-package gobra.json files.
       #
-      # The Gobra image also supplies Z3. All three packages verify on the Z3
+      # The Gobra image also supplies Z3. All four packages verify on the Z3
       # that `latest` currently ships (4.16.0). Getting there took re-encoding
       # container/list's ownership and three rounds of work on internal/bytealg;
       # src/gobra/TOOLCHAIN.md has the Z3 bisection and says which cliffs are
       # nearby before you change those proofs.
       #
-      # Runtimes, for judging the 1h timeout: sort ~10s, container/list ~4min,
-      # internal/bytealg ~21min, nearly all of the last in IndexRabinKarpBytes.
-      # See src/internal/bytealg/GOBRA.md.
+      # The packages are listed cheapest first, and every step carries
+      # `if: ${{ !cancelled() }}` so that one failure does not hide the
+      # packages behind it. Without that, a failure in internal/bytealg -- the
+      # one package whose runtime leaves it close to its assert budget -- means
+      # the two packages after it are never even attempted, and a PR touching
+      # only those gets no signal about its own work.
+      #
+      # Runtimes, for judging the 1h timeout: sort ~10s, container/ring ~40s,
+      # container/list ~4min, internal/bytealg ~21min, nearly all of the last
+      # in IndexRabinKarpBytes. See src/internal/bytealg/GOBRA.md.
       - name: Verify package sort
         uses: viperproject/gobra-action@main
         with:
           configFile: 'src/sort'
           timeout: 1h
 
+      # container/ring is verified except for Unlink, which carries
+      # "requires false", and the same-ring case of Link, which Link's
+      # precondition excludes; see src/container/ring/gobra-status.md.
+      - name: Verify package container/ring
+        if: ${{ !cancelled() }}
+        uses: viperproject/gobra-action@main
+        with:
+          configFile: 'src/container/ring'
+          timeout: 1h
+
+      - name: Verify package container/list
+        if: ${{ !cancelled() }}
+        uses: viperproject/gobra-action@main
+        with:
+          configFile: 'src/container/list'
+          timeout: 1h
+
       # Note: the action's default javaXss is 1g, which is also the maximum
       # the image's JVM accepts ("exceeds the maximum representable size" for
       # anything larger), so the stack size is left at its default.
       - name: Verify package internal/bytealg
+        if: ${{ !cancelled() }}
         uses: viperproject/gobra-action@main
         with:
           configFile: 'src/internal/bytealg'
-          timeout: 1h
-
-      - name: Verify package container/list
-        uses: viperproject/gobra-action@main
-        with:
-          configFile: 'src/container/list'
           timeout: 1h

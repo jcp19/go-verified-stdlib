@@ -1,0 +1,192 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// This file holds the Gobra specification of package container/list:
+// predicate definitions and ghost (pure) functions.
+//
+// A list carries its own abstraction in three ghost fields, read through the
+// getters below:
+//   - Es() seq[*Element]: the elements of the list, in list order,
+//   - Vs() seq[any]:      the values stored in those elements (Vs()[i] is the
+//                         value of Es()[i]), and
+//   - IsInit() bool:      whether the sentinel ring has been initialized.
+// An element that belongs to no list is described by e.Detached(). The
+// predicate l.Mem() owns the list header l and all elements of Es(), and
+// states that the doubly-linked ring rooted at the sentinel &l.root links
+// exactly those elements, in order. The zero value of List has empty
+// sequences and IsInit() == false, so clients may use a zero List directly.
+
+package list
+
+// R is the permission amount this package's public contracts use to stand for
+// read-only access. Read-only methods ask for acc(l.Mem(), R) rather than the
+// whole predicate, so a caller keeps a positive share across the call and can
+// frame the list for free -- which is why those methods carry no "nothing
+// changed" postcondition.
+ghost const R perm = 1/1000
+
+// ElemSet is the set of elements of es. Ownership in Mem is keyed by this set
+// rather than by sequence index, which is what makes a permutation of l.es free:
+// moving an element leaves the set, and therefore the whole footprint, alone.
+//
+// The pointwise membership travels with the function as a postcondition, so that
+// Mem's body -- which cannot call a lemma -- still gets permission for l.es[i].
+// ElemSet is opaque: it is recursive, and it appears in Mem's body, so leaving
+// it transparent makes every `unfolding l.Mem()` -- that is, every call to Es(),
+// Vs() or IsInit() -- unroll the recursion. Mem needs only the postcondition,
+// which stays visible; the lemmas reveal the body where they induct on it.
+ghost
+ensures forall k int :: {es[k]} 0 <= k && k < len(es) ==> es[k] elem res
+// the empty case, so that folding Mem for a fresh or emptied list does not have
+// to reveal the body
+ensures len(es) == 0 ==> res == set[*Element]{}
+decreases len(es)
+opaque
+pure func ElemSet(es seq[*Element]) (res set[*Element]) {
+	return len(es) == 0 ? set[*Element]{} :
+		(set[*Element]{es[0]} union ElemSet(es[1:]))
+}
+
+pred (l *List) Mem() {
+	acc(l) &&
+	len(l.es) == len(l.vs) &&
+	l.length == len(l.es) &&
+	// Ownership of all elements, one quantifier per field, each triggered on
+	// that field: the canonical Viper shape for a quantified permission. A
+	// single trigger covering the whole struct would not fire when the proof
+	// touches p.next, which is exactly what the linkage clauses below do.
+	//
+	// The condition is membership in the element set, not a range of indices.
+	// Keying it by index makes the receiver map change whenever l.es is
+	// permuted, and re-deriving the footprint through that permutation is what
+	// made move and remove diverge.
+	// An element occurs once. Under the old index-keyed ownership this was
+	// implied -- full permission to l.es[i] for every i cannot be held twice for
+	// the same pointer -- but a set-keyed footprint says nothing about the
+	// index-to-pointer map, so it has to be stated.
+	//
+	// Stated as a cardinality rather than as pairwise disequality: the pairwise
+	// form needs a two-variable multi-pattern, which is instantiated once per
+	// pair of l.es[.] terms, and Mem is unfolded by every call to Es(), Vs() and
+	// IsInit(). This form has no quantifier at all; LemmaDistinct unpacks it to
+	// the pairwise form at the few sites that need it.
+	len(ElemSet(l.es)) == len(l.es) &&
+	// Every element of the sequence is in the set that owns it. This is also
+	// ElemSet's postcondition, but stating it here puts it in scope of the
+	// clauses below, which need it to look up permission for l.es[i].
+	(forall i int :: {l.es[i]} 0 <= i && i < len(l.es) ==>
+		l.es[i] elem ElemSet(l.es)) &&
+	(forall p *Element :: {p.next} p elem ElemSet(l.es) ==> acc(&p.next)) &&
+	(forall p *Element :: {p.prev} p elem ElemSet(l.es) ==> acc(&p.prev)) &&
+	(forall p *Element :: {p.Value} p elem ElemSet(l.es) ==> acc(&p.Value)) &&
+	(forall p *Element :: {p.list} p elem ElemSet(l.es) ==>
+		acc(&p.list) && p != &l.root && p.list == l) &&
+	// Each element stores the corresponding value. Triggered on the sequence
+	// index rather than on the field read: a heap-dependent trigger has to be
+	// well-defined where it appears, and the permission for l.es[i].Value comes
+	// from the quantifier above. The body names l.vs[i], a term over a different
+	// sequence, so this cannot re-trigger itself.
+	(forall i int :: {l.es[i]} 0 <= i && i < len(l.es) ==>
+		l.es[i].Value === l.vs[i]) &&
+	// l.ini distinguishes the zero List value from an initialized empty list;
+	// both have empty sequences. A non-empty list is always initialized.
+	(len(l.es) > 0 ==> l.ini) &&
+	// an uninitialized list is the zero value
+	(!l.ini ==> l.root.next == nil && l.root.prev == nil) &&
+	// initialized empty list: the sentinel forms a ring with itself
+	(l.ini && len(l.es) == 0 ==> l.root.next == &l.root && l.root.prev == &l.root) &&
+	// non-empty list: the sentinel is linked to the first and the last element
+	(len(l.es) > 0 ==> l.root.next == l.es[0] && l.root.prev == l.es[len(l.es)-1] &&
+		l.es[0].prev == &l.root && l.es[len(l.es)-1].next == &l.root) &&
+	// Consecutive elements are linked to each other, one direction each,
+	// triggered on the field read rather than on the sequence index.
+	//
+	// Triggering on l.es[i] would let the solver chain instantiations along the
+	// sequence, since the body names l.es[i+1]. Guarding a pair of indices by
+	// k == i+1 avoids that, but is instantiated once per *pair* of l.es[.]
+	// terms, and Mem pays that at every unfold. The field read is neither:
+	// matching is linear in one index and free of arithmetic, and naming
+	// l.es[i+1] does not create l.es[i+1].next, so the body cannot re-trigger
+	// the quantifier. That last part only holds because ownership above is
+	// keyed by the set; an index-keyed footprint materialises the field terms
+	// and the same trigger loops.
+	(forall i int :: {l.es[i].next} 0 <= i && i+1 < len(l.es) ==>
+		l.es[i].next == l.es[i+1]) &&
+	(forall i int :: {l.es[i].prev} 0 < i && i < len(l.es) ==>
+		l.es[i].prev == l.es[i-1])
+}
+
+// Es returns the elements of l, in list order.
+ghost
+requires  l.Mem()
+decreases
+pure func (l *List) Es() seq[*Element] {
+	return unfolding l.Mem() in l.es
+}
+
+// Vs returns the values stored in the elements of l, in list order. Its
+// postcondition exports the length relation with Es, which is otherwise
+// hidden inside the folded predicate and is needed to show that contracts
+// indexing into Vs are well-formed.
+ghost
+requires  l.Mem()
+ensures   len(res) == len(l.Es())
+decreases
+pure func (l *List) Vs() (res seq[any]) {
+	return unfolding l.Mem() in l.vs
+}
+
+// IsInit reports whether the sentinel ring of l has been initialized, by Init or
+// by lazyInit. It tells the zero List value apart from an initialized empty
+// list; both have empty Es() and Vs().
+ghost
+requires  l.Mem()
+decreases
+pure func (l *List) IsInit() bool {
+	return unfolding l.Mem() in l.ini
+}
+
+// Detached reports whether e belongs to no list and is linked to nothing. It
+// is the abstraction the public contracts use for an element the caller owns
+// outright: an element is either inside some list's Mem() or detached and held
+// by the caller. A fresh Element and an element just returned to the caller by
+// Remove are both detached; nothing in the package can produce an element with
+// list == nil and a live neighbour. Clients cannot name the fields this reads,
+// so every contract that talks about a caller-owned element goes through it.
+ghost
+requires  acc(e)
+decreases
+pure func (e *Element) Detached() bool {
+	return e.list == nil && e.next == nil && e.prev == nil
+}
+
+// MoveSeq returns the result of moving the element at index i of es to just
+// after position j, where j == -1 stands for the front of the sequence.
+// It matches the effect of the internal method l.move(es[i], at) with
+// at == (j == -1 ? &l.root : es[j]).
+ghost
+requires  0 <= i && i < len(es)
+requires  -1 <= j && j < len(es)
+decreases
+pure func MoveSeq(es seq[*Element], i, j int) seq[*Element] {
+	return i == j ? es :
+		(let rest := es[:i] ++ es[i+1:] in
+		(let pos := (j < i ? j+1 : j) in
+		rest[:pos] ++ seq[*Element]{es[i]} ++ rest[pos:]))
+}
+
+// MoveSeqV is MoveSeq for the value sequence.
+ghost
+requires  0 <= i && i < len(vs)
+requires  -1 <= j && j < len(vs)
+decreases
+pure func MoveSeqV(vs seq[any], i, j int) seq[any] {
+	return i == j ? vs :
+		(let rest := vs[:i] ++ vs[i+1:] in
+		(let pos := (j < i ? j+1 : j) in
+		rest[:pos] ++ seq[any]{vs[i]} ++ rest[pos:]))
+}

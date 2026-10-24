@@ -14,7 +14,17 @@ jobs:
         uses: actions/checkout@v5
 
       # Gobra runs in config file mode: all of its options come from
-      # src/gobra-mod.json (module-wide) and src/sort/gobra.json (package).
+      # src/gobra-mod.json (module-wide) and the per-package gobra.json files.
+      #
+      # The Gobra image also supplies Z3. All three packages verify on the Z3
+      # that `latest` currently ships (4.16.0). Getting there took re-encoding
+      # container/list's ownership and three rounds of work on internal/bytealg;
+      # src/gobra/TOOLCHAIN.md has the Z3 bisection and says which cliffs are
+      # nearby before you change those proofs.
+      #
+      # Runtimes, for judging the 1h timeout: sort ~10s, container/list ~4min,
+      # internal/bytealg ~21min, nearly all of the last in IndexRabinKarpBytes.
+      # See src/internal/bytealg/GOBRA.md.
       - name: Verify package sort
         uses: viperproject/gobra-action@main
         with:
@@ -28,4 +38,10 @@ jobs:
         uses: viperproject/gobra-action@main
         with:
           configFile: 'src/internal/bytealg'
+          timeout: 1h
+
+      - name: Verify package container/list
+        uses: viperproject/gobra-action@main
+        with:
+          configFile: 'src/container/list'
           timeout: 1h

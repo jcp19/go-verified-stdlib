@@ -163,6 +163,7 @@ session.
 | [`gobra-review-code`](.claude/skills/gobra-review-code) | Reviews Gobra code for the conventions a verifier will never complain about: annotation order, `.go`/`.gobra` file separation, purity, permission strength (read fractions vs. `write`), `old` expressions, unfolding in contracts, and interface specifications. |
 | [`gobra-debug-perf`](.claude/skills/gobra-debug-perf) | Diagnoses a slow or diverging verification — which member, which query, which quantifier — before anything is changed. Ships scripts for ranking members by cost and summarising SMT queries. |
 | [`gobra-improve-perf`](.claude/skills/gobra-improve-perf) | Acts on that diagnosis: outline statements, opaque functions, predicates, the chopper, `moreJoins`, `exhaleMode`, quantified permissions and triggers — validating each fix and reverting the ones that do not help. |
+| [`gobra-locate-failure`](.claude/skills/gobra-locate-failure) | Finds *why* a verification fails, the way `gobra-debug-perf` finds why it is slow: triage first (proof gap, timeout, incomplete backend mode, or a property that is simply false), then small verifier-checked rewrites of the proof — decompose the failing obligation, walk the failing fact up to the statement that destroys it, localize a missing permission — after ProofPlumber's proof actions. Ships scripts that classify Gobra's errors and split assertions safely. |
 
 ## Why Go 1.18
 

@@ -54,7 +54,7 @@ Gobra prints each verification error as `<file:line:column>` followed by the
 why the backend could not discharge it:
 
 ```
-<src/internal/bytealg/bytealg.go:191:6> Assert might fail.
+<src/pkg/file.go:191:6> Assert might fail.
 Assertion forall k int :: 0 <= k && k < n ==> &s[lo:i][k] == &s[lo+k] might not hold.
 ```
 
@@ -160,8 +160,17 @@ that runs out of budget is reported *exactly* like a refuted one. Re-run the
 isolated member with a much larger timeout:
 
 ```bash
-gobra -i pkg/b.go@412 --assertTimeout 300000
+gobra -i pkg/b.go@412 --assertTimeout 200000
 ```
+
+Keep the value below about 214 seconds. Silicon converts it into a Z3 `rlimit` —
+a budget of *work*, not of wall-clock time or memory — by multiplying by 10000
+in a signed 32-bit integer, so a larger number (`--assertTimeout 300000`, say)
+overflows and aborts the run with `Expected values for parameter rlimit is an
+unsigned integer`, testing nothing (`src/gobra/TOOLCHAIN.md`). If 200 s is not
+enough, drop the timeout and cap the run yourself (`timeout 30m gobra …`): an
+rlimit does not bound memory, and the same document records a runaway query
+growing past 7.5 GB.
 
 If it now passes, stop. This is not a missing fact and nothing in §3 applies —
 hand over to `gobra-debug-perf`. Worse, probing makes it *harder*: every assert
@@ -301,28 +310,36 @@ parameter *as part of* the `return`, so an `assert` placed textually above it
 runs while `res` still holds whatever it held before the return — its zero
 value, unless the body assigned it earlier. The probe then tests a claim nobody
 asked about, and for a clause shaped `res == -1 ==> …` it passes *vacuously*
-whenever that stale value is not `-1`. A probe that
-reports success while testing nothing is the worst outcome available.
+whenever that stale value is not `-1`. A probe that reports success while
+testing nothing is the worst outcome available.
 
-Split the return so the assignment happens first:
+Bind the returned value to a local first — the project's sanctioned "introduce
+a local for an intermediate result" (`gobra-specify-verify`; in this repo, the
+README's *How the Go code may be changed*) — and assert the clause with that
+local in place of the result name:
 
 ```go
 //@ ensures res == -1 ==> NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
 func IndexRabinKarpBytes(s, sep []byte /*@ , ghost p perm @*/) (res int) {
     ...
-    res = -1
-    //@ assert res == -1 ==> NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
-    return
+    r := -1
+    //@ assert r == -1 ==> NoMatchBefore(seq(s), seq(sep), len(s)-len(sep)+1)
+    return r
 }
 ```
 
-Name the results first if they are unnamed — naming return parameters is one of
-the sanctioned code edits in `gobra-specify-verify`, and the `return e` →
-`res = e; return` rewrite is a probe like any other, so §6 takes it back out. A
-naked `return` needs no rewrite: the results already hold their values.
+This is the weakest-precondition step of §3.3 applied to the return: the
+postcondition is checked with `res` equal to the returned value, so the local
+stands in for `res`. It touches no control flow and the local may stay, so
+unlike a rewrite of the `return` itself there is nothing to undo. Name the
+results first if they are unnamed — also sanctioned, and the clause cannot be
+written without a name. For an untyped constant give the local its type
+(`var r uint32 = 0`), or it will not match the result type. A naked `return`
+needs no local: the named results already hold their values, so assert the
+clause as written.
 
-Two more traps at a return. With several results, assign them all
-(`r1, r2 = a, b`) before the assert, since a postcondition normally relates
+Two more traps at a return. With several results, bind them all
+(`r1, r2 := a, b`) before the assert, since a postcondition normally relates
 them. And if the function `defer`s anything that writes a named result, the
 postcondition is checked *after* the deferred call runs, so no point in the body
 is the right one — work from the deferred function's contract instead.
@@ -354,11 +371,15 @@ the final `i++`.)
   init statement's value for the loop variable, which is not in scope yet: for
   `for i := 0; …`, probe the clause with `0` for `i`. That substitution is the
   weakest-precondition step of §3.3.
-- *not preserved* → assert the clause at the **end of the body**, substituting
-  the post statement's effect: `i+1` for `i` when the post is `i++`. Better,
-  move the post statement into the body — `for i := n; i < len(s); {` with `i++`
-  inline, exactly as `bytealg.go:181` does — which makes the end of the body and
-  the invariant check the same state and removes the substitution entirely.
+- *not preserved* → assert the clause at the **end of the body** and before
+  every `continue` (each is a separate path to the loop head), substituting the
+  post statement's effect: `i+1` for `i` when the post is `i++`. Do not
+  restructure the loop to avoid the substitution. The project forbids it ("no
+  loop is restructured"), and moving the post statement into the body changes
+  behaviour whenever the body has a `continue`, which would then skip it. Where
+  upstream already writes the loop without a post statement, as
+  `IndexRabinKarpBytes` does (`for i := n; i < len(s); {` with `i++` inline), the
+  end of the body *is* the loop head and no substitution is needed.
 
 Asserting the invariant anywhere earlier in the body tests nothing: it is
 assumed at the top.
@@ -581,23 +602,33 @@ need, so the unfolding happens in the lemma's small context and the caller
 receives only the conclusion.
 
 When the fix does need a real `unfold`, keep the unfolded region short: an
-unfolded predicate costs the same as no predicate (`gobra-improve-perf` §2).
+unfolded predicate costs the same as no predicate (`gobra-debug-perf`, "Common
+culprits worth checking by sight").
 
 ### 3.9 Case-split
 
-Some goals have two proofs and the solver commits to neither. Split explicitly:
+Some goals have two proofs and the solver commits to neither. Select the case
+yourself, so that each path carries a one-step goal:
 
 ```go
-//@ assert a <= b                        // failing
-//@ assert a < b || a == b               // same goal, two proofs offered
-//@ ghost if a != b { assert a < b }     // the case that actually needs work
+//@ assert a <= b                                              // failing
+//@ ghost if a == b { assert a <= b } else { assert a < b }     // a goal per path
 ```
 
-Worth trying for `<=` (the *Split Inequality* action), `!=`, disjunctive goals,
-and `nil`/non-`nil` receivers. **Reading it:** the branch that still fails is a
-strictly smaller goal with a stronger hypothesis. If both branches verify, the
-case analysis itself was the missing step and a `ghost if` is a legitimate
-permanent fix.
+Do not probe with the disjunction itself (`assert a < b || a == b`). A bare
+disjunction is one goal with no branch for the solver to take, and
+`gobra-improve-perf` §5c records it as the most expensive shape found in a real
+proof — one such clause was 65% of a package's prover time. The `ghost if` is
+the cure that section recommends, and it is the better probe for the same
+reason.
+
+Worth trying for `<=` (the *Split Inequality* action), `!=`, disjunctive goals
+(put the discriminating condition in the `ghost if`), and `nil`/non-`nil`
+receivers. **Reading it:** the branch that still fails is a strictly smaller
+goal with a stronger hypothesis. If both branches verify, the case analysis
+itself was the missing step and a `ghost if` is a legitimate permanent fix —
+but measure it, since the extra branch multiplies the context below it (§3.5);
+§5c found a split that fixed the hot query and slowed the member overall.
 
 ### 3.10 Bounds and reslicing facts
 
@@ -617,8 +648,8 @@ without quantifier reasoning that often does not fire on its own:
 If a failure sits at or after a line containing a subslice expression, insert
 that assertion before concluding anything else. It is both the probe and the
 fix. Keep arithmetic out of the trigger — `{&s[i-n:i][k]}` is rejected by Viper,
-`{&s[lo:i][k]}` with `ghost lo := i - n` is not; `bytealg.go:190` does exactly
-this.
+`{&s[lo:i][k]}` with `ghost lo := i - n` is not; `IndexRabinKarpBytes` in
+`bytealg.go` does exactly this.
 
 ### 3.11 Localize the permission
 
@@ -791,23 +822,31 @@ to step 4 with the *precondition* as the goal, or to §2 Q3.
 - **`assume` left behind is a silent unsoundness.** If one has to survive, it
   goes in `assumptions.gobra`, named and justified (`gobra-review-code` §8).
 - **A member that verifies is not necessarily proving anything.** A vacuous
-  proof is worse than a failing one, because it is silent. Put `refute false` at
-  the end of the body — and inside each branch that matters — once the member is
-  green, especially if you strengthened a `requires` along the way.
+  proof is worse than a failing one, because it is silent. Once the member is
+  green, put `refute false` immediately before each `return` — and inside each
+  branch that matters — especially if you strengthened a `requires` along the
+  way. Not after the last `return`: that code is dead, so a probe there is never
+  evaluated.
 
 ## 6. Clean up before reporting
 
 Probes come out. Concretely, before you call this done:
 
 1. Delete every `assert`, `ghost` variable, `outline`, `assume`, `refute` and
-   split-out clause that existed only to localize.
+   split-out clause that existed only to localize. Then read `git diff` over the
+   `.go` files: apart from annotations, only the transformations the project
+   permits may remain (a local bound to a returned value is one; anything that
+   moves control flow is not).
 2. Re-verify the member, then the package (`gobra -p ./pkg`). Probes suppress
    later errors; the package run is what tells you the fix is real.
 3. **Check the proof is not vacuous.** A member that verifies because its
-   context is inconsistent verifies silently. Put `refute false` at the end of
-   the body and inside any branch you care about, confirm each one is *not*
-   reported, and take them out again. Do this whenever you strengthened a
-   `requires`, added an `assume`, or changed an invariant while debugging.
+   context is inconsistent verifies silently. Put `refute false` immediately
+   before each `return` (and at the end of a body that falls off the end) and
+   inside any branch you care about, confirm none is reported, and take them out
+   again. `gobra-specify-verify` states the same check with `assert false`,
+   which has the opposite sign: there Gobra *must* report an error. Do this
+   whenever you strengthened a `requires`, added an `assume`, or changed an
+   invariant while debugging.
 4. Keep only what earns its place: an assertion that is *load-bearing* (removing
    it breaks the proof), a lemma extracted in §3.6, a bridge assertion from
    §3.10, or a snapshot that the invariant now needs. Test each one by deleting

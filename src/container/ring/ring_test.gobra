@@ -429,3 +429,259 @@ func TestLink2() {
 	sumOfConcat(seq[any]{qvs[0]} ++ cvs, tvs)
 	verify(r10, 12, sumN(10)+42+77, ds, dvs)
 }
+
+// TestCornerCases is the original's test of the nil ring and of the zero Ring
+// value, which is a ring of one element: linking it to the nil ring and
+// unlinking nothing from it both leave it as it was.
+decreases
+func TestCornerCases() {
+	// var r0 *Ring; var r1 Ring
+	var r0 *Ring
+	r1@ := Ring{}
+	ghost rs := seq[*Ring]{&r1}
+	ghost vs := seq[any]{r1.Value}
+	LemmaElemSetSingle(&r1)
+	fold Mem(rs, vs)
+	assert vs[0] == nil && intOrNil(vs[0]) && valOf(vs[0]) == 0
+	assert vs[:0] == seq[any]{} && sumOf(seq[any]{}) == 0
+	assert sumOf(vs) == sumOf(vs[:len(vs)-1]) + valOf(vs[len(vs)-1])
+	assert sumOf(vs) == 0
+
+	// Basics
+	verify(r0, 0, 0, seq[*Ring]{}, seq[any]{})
+	verify(&r1, 1, 0, rs, vs)
+	// Insert
+	(&r1).Link(r0, rs, vs, vs[0], seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
+	verify(r0, 0, 0, seq[*Ring]{}, seq[any]{})
+	verify(&r1, 1, 0, rs, vs)
+	// Insert
+	(&r1).Link(r0, rs, vs, vs[0], seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
+	verify(r0, 0, 0, seq[*Ring]{}, seq[any]{})
+	verify(&r1, 1, 0, rs, vs)
+	// Unlink
+	(&r1).Unlink(0, rs, vs)
+	verify(&r1, 1, 0, rs, vs)
+}
+
+// TestLinkUnlink is the original's round trip: unlinking j elements from a
+// fresh ring of i and linking them back in where they came from restores the
+// ring, element for element. The results of Unlink are rooted where Mem is --
+// the removed subring at its first element, the rest at r -- so every verify
+// of the original goes through without re-rooting.
+decreases
+func TestLinkUnlink() {
+	invariant 1 <= i && i <= 4
+	decreases 4 - i
+	for i := 1; i < 4; i++ {
+		rs, vs, ri := New(i)
+
+		invariant 0 <= j && j <= i
+		invariant Mem(rs, vs) && len(rs) == i && len(vs) == i && rs[0] == ri
+		invariant forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> vs[k] == nil
+		decreases i - j
+		for j := 0; j < i; j++ {
+			assert Wrap(j, i) == j
+			rj := ri.Unlink(j, rs, vs)
+			ghost us := rs[1:1+j]
+			ghost uvs := vs[1:1+j]
+			ghost crs := seq[*Ring]{ri} ++ rs[1+j:]
+			ghost cvs := seq[any]{vs[0]} ++ vs[1+j:]
+			assert forall k int :: {uvs[k]} 0 <= k && k < len(uvs) ==> uvs[k] == vs[1+k] && intOrNil(uvs[k])
+			assert forall k int :: {cvs[k]} 0 <= k && k < len(cvs) ==> cvs[k] == (k == 0 ? vs[0] : vs[j+k]) && intOrNil(cvs[k])
+			// Unlink(0) removes nothing and leaves the ring as it was.
+			assert j == 0 ==> crs == rs && cvs == vs
+			verify(rj, j, -1, us, uvs)
+			verify(ri, i-j, -1, crs, cvs)
+			ri.Link(rj, crs, cvs, vs[0], rs[1+j:], vs[1+j:], us, uvs, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
+			assert rs == seq[*Ring]{ri} ++ us ++ rs[1+j:]
+			assert vs == seq[any]{vs[0]} ++ uvs ++ vs[1+j:]
+			assert forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> intOrNil(vs[k])
+			verify(ri, i, -1, rs, vs)
+		}
+	}
+}
+
+// sumOfRot: re-rooting a ring does not change the sum of its values.
+ghost
+requires  0 <= i && i <= len(vs)
+requires  forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> intOrNil(vs[k])
+ensures   forall k int :: {(vs[i:] ++ vs[:i])[k]} 0 <= k && k < len(vs) ==> intOrNil((vs[i:] ++ vs[:i])[k])
+ensures   sumOf(vs[i:] ++ vs[:i]) == sumOf(vs)
+decreases
+func sumOfRot(vs seq[any], i int) {
+	ghost a := vs[:i]
+	ghost b := vs[i:]
+	assert forall k int :: {a[k]} 0 <= k && k < len(a) ==> a[k] === vs[k]
+	assert forall k int :: {b[k]} 0 <= k && k < len(b) ==> b[k] === vs[k+i]
+	assert vs == a ++ b
+	sumOfConcat(a, b)
+	sumOfConcat(b, a)
+}
+
+// TestLink1 is the original's same-ring test on a ring of two: linking r to
+// its own successor removes nothing, and linking an element to itself cuts
+// the other element out. The handles the original verifies are not always the
+// first element of their ring, so the ring is re-rooted with LemmaRotate first.
+decreases
+func TestLink1() {
+	// r1a := makeN(1); var r1b Ring
+	qs, qvs, r1a := makeN(1)
+	sumIsSumN(qvs, 1)
+	assert sumOf(qvs) == 1
+	r1b@ := Ring{}
+	ghost bs := seq[*Ring]{&r1b}
+	ghost bvs := seq[any]{r1b.Value}
+	LemmaElemSetSingle(&r1b)
+	fold Mem(bs, bvs)
+	assert bvs[0] == nil && intOrNil(bvs[0]) && valOf(bvs[0]) == 0
+	assert bvs[:0] == seq[any]{} && sumOf(seq[any]{}) == 0
+	assert sumOf(bvs) == sumOf(bvs[:len(bvs)-1]) + valOf(bvs[len(bvs)-1])
+	assert sumOf(bvs) == 0
+
+	// r2a := r1a.Link(&r1b); verify(t, r2a, 2, 1)
+	assert qs == seq[*Ring]{r1a} ++ seq[*Ring]{} && qvs == seq[any]{qvs[0]} ++ seq[any]{}
+	r2a := r1a.Link(&r1b, qs, qvs, qvs[0], seq[*Ring]{}, seq[any]{}, bs, bvs, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
+	ghost cs := seq[*Ring]{r1a} ++ bs ++ seq[*Ring]{}
+	ghost cvs := seq[any]{qvs[0]} ++ bvs ++ seq[any]{}
+	assert cvs == qvs ++ bvs
+	sumOfConcat(qvs, bvs)
+	verify(r2a, 2, 1, cs, cvs)
+	assert r2a == r1a
+
+	// r2b := r2a.Link(r2a.Next()); verify(t, r2b, 2, 1)
+	nx := r2a.Next(cs, cvs, 0)
+	assert cs == seq[*Ring]{r2a} ++ cs[1:] && cvs == seq[any]{cvs[0]} ++ cvs[1:]
+	assert cs[1:] == seq[*Ring]{} ++ cs[1:] && cvs[1:] == seq[any]{} ++ cvs[1:]
+	r2b := r2a.Link(nx, cs, cvs, cvs[0], cs[1:], cvs[1:], seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{}, cs[1:], cvs[1:])
+	assert seq[*Ring]{r2a} ++ cs[1:] == cs && seq[any]{cvs[0]} ++ cvs[1:] == cvs
+	ghost ds := cs[1:] ++ cs[:1]
+	ghost dvs := cvs[1:] ++ cvs[:1]
+	LemmaRotate(cs, cvs, 1)
+	sumOfRot(cvs, 1)
+	assert ds[0] == r2b && ds[1] == r2a
+	verify(r2b, 2, 1, ds, dvs)
+	nx2 := r2a.Next(ds, dvs, 1)
+	assert r2b == nx2
+
+	// r1c := r2b.Link(r2b); verify(t, r1c, 1, 1); verify(t, r2b, 1, 0)
+	assert ds == seq[*Ring]{r2b} ++ ds[1:] && dvs == seq[any]{dvs[0]} ++ dvs[1:]
+	assert ds[1:] == ds[1:] ++ seq[*Ring]{} && dvs[1:] == dvs[1:] ++ seq[any]{}
+	r1c := r2b.Link(r2b, ds, dvs, dvs[0], ds[1:], dvs[1:], seq[*Ring]{}, seq[any]{}, ds[1:], dvs[1:], seq[*Ring]{}, seq[any]{})
+	ghost es := seq[*Ring]{r2b} ++ seq[*Ring]{}
+	ghost evs := seq[any]{dvs[0]} ++ seq[any]{}
+	assert dvs[1:] == qvs && evs == bvs
+	verify(r1c, 1, 1, ds[1:], dvs[1:])
+	verify(r2b, 1, 0, es, evs)
+}
+
+// TestUnlink is the original's test of Unlink on a ring of ten, from r and
+// from an element six ahead of it.
+decreases
+func TestUnlink() {
+	// r10 := makeN(10); s10 := r10.Move(6)
+	qs, qvs, r10 := makeN(10)
+	s10 := r10.Move(6, qs, qvs, 0)
+	sumIsSumN(qvs, 10)
+	sum10 := sumN(10)
+
+	// verify(t, r10, 10, sum10); verify(t, s10, 10, sum10)
+	verify(r10, 10, sum10, qs, qvs)
+	LemmaRotate(qs, qvs, 6)
+	sumOfRot(qvs, 6)
+	ghost ps := qs[6:] ++ qs[:6]
+	ghost pvs := qvs[6:] ++ qvs[:6]
+	assert ps[0] == s10
+	verify(s10, 10, sum10, ps, pvs)
+	LemmaRotate(ps, pvs, 4)
+	assert ps[4:] ++ ps[:4] == qs && pvs[4:] ++ pvs[:4] == qvs
+
+	// r0 := r10.Unlink(0); verify(t, r0, 0, 0)
+	r0 := r10.Unlink(0, qs, qvs)
+	assert sumOf(seq[any]{}) == 0
+	verify(r0, 0, 0, seq[*Ring]{}, seq[any]{})
+
+	// r1 := r10.Unlink(1); verify(t, r1, 1, 2); verify(t, r10, 9, sum10-2)
+	assert Wrap(1, 10) == 1
+	r1 := r10.Unlink(1, qs, qvs)
+	ghost us := qs[1:2]
+	ghost uvs := qvs[1:2]
+	ghost crs := seq[*Ring]{r10} ++ qs[2:]
+	ghost cvs := seq[any]{qvs[0]} ++ qvs[2:]
+	ghost hvs := seq[any]{qvs[0]}
+	assert uvs == seq[any]{qvs[1]} && uvs[0] === qvs[1] && intOrNil(qvs[1])
+	assert valOf(qvs[1]) == 2
+	assert intOrNil(uvs[0]) && uvs[:0] == seq[any]{} && valOf(uvs[0]) == 2
+	assert sumOf(uvs) == sumOf(uvs[:len(uvs)-1]) + valOf(uvs[len(uvs)-1])
+	assert sumOf(uvs) == 2
+	verify(r1, 1, 2, us, uvs)
+	assert forall k int :: {qvs[2:][k]} 0 <= k && k < len(qvs[2:]) ==> qvs[2:][k] === qvs[k+2] && intOrNil(qvs[2:][k])
+	assert qvs == (hvs ++ uvs) ++ qvs[2:]
+	sumOfConcat(hvs, uvs)
+	sumOfConcat(hvs ++ uvs, qvs[2:])
+	sumOfConcat(hvs, qvs[2:])
+	verify(r10, 9, sum10-2, crs, cvs)
+
+	// r9 := r10.Unlink(9); verify(t, r9, 9, sum10-2); verify(t, r10, 9, sum10-2)
+	assert Wrap(9, 9) == 0
+	r9 := r10.Unlink(9, crs, cvs)
+	assert crs[1+0:] == crs[1:] && seq[*Ring]{r10} ++ crs[1:] == crs
+	assert cvs[1+0:] == cvs[1:] && seq[any]{cvs[0]} ++ cvs[1:] == cvs
+	LemmaRotate(crs, cvs, 1)
+	sumOfRot(cvs, 1)
+	ghost ds := crs[1:] ++ crs[:1]
+	ghost dvs := cvs[1:] ++ cvs[:1]
+	assert ds[0] == r9
+	verify(r9, 9, sum10-2, ds, dvs)
+	LemmaRotate(ds, dvs, 8)
+	assert ds[8:] ++ ds[:8] == crs && dvs[8:] ++ dvs[:8] == cvs
+	verify(r10, 9, sum10-2, crs, cvs)
+}
+
+// TestLink3 is the original's growing ring: the zero Ring value, linked in
+// turn to fresh rings of 1, ..., 9 elements. Link's result is r for the first
+// link and r's old successor after that, so verify gets the ring re-rooted at
+// the result, and the loop re-roots it back at r.
+decreases
+func TestLink3() {
+	// var r Ring
+	r@ := Ring{}
+	ghost rs := seq[*Ring]{&r}
+	ghost vs := seq[any]{r.Value}
+	LemmaElemSetSingle(&r)
+	fold Mem(rs, vs)
+	n := 1
+
+	invariant 1 <= i && i <= 10
+	invariant 1 <= n && Mem(rs, vs) && len(rs) == n && len(vs) == n && rs[0] == &r
+	invariant forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> vs[k] == nil
+	decreases 10 - i
+	for i := 1; i < 10; i++ {
+		n += i
+		// verify(t, r.Link(New(i)), n, -1)
+		qs, qvs, q := New(i)
+		ghost ts := rs[1:]
+		ghost tvs := vs[1:]
+		assert rs == seq[*Ring]{&r} ++ ts && vs == seq[any]{vs[0]} ++ tvs
+		res := (&r).Link(q, rs, vs, vs[0], ts, tvs, qs, qvs, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
+		ghost nrs := seq[*Ring]{&r} ++ qs ++ ts
+		ghost nvs := seq[any]{vs[0]} ++ qvs ++ tvs
+		ghost j := len(ts) > 0 ? 1+len(qs) : 0
+		assert forall k int :: {nvs[k]} 0 <= k && k < len(nvs) ==> nvs[k] == nil
+		assert res == nrs[j]
+		LemmaRotate(nrs, nvs, j)
+		ghost ds := nrs[j:] ++ nrs[:j]
+		ghost dvs := nvs[j:] ++ nvs[:j]
+		rotReadV(dvs, nvs, j)
+		assert forall k int :: {dvs[k]} 0 <= k && k < len(dvs) ==> intOrNil(dvs[k])
+		verify(res, n, -1, ds, dvs)
+		ghost if j > 0 {
+			LemmaRotate(ds, dvs, len(nrs)-j)
+			assert ds[len(nrs)-j:] ++ ds[:len(nrs)-j] == nrs
+			assert dvs[len(nrs)-j:] ++ dvs[:len(nrs)-j] == nvs
+		} else {
+			assert ds == nrs && dvs == nvs
+		}
+		rs = nrs
+		vs = nvs
+	}
+}

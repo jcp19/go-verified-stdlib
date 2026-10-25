@@ -111,6 +111,34 @@ func modPred(x int, m int) {
 	}
 }
 
+// modSucc: adding one steps the remainder forward, wrapping from m-1 to 0.
+ghost
+requires  0 < m && 0 <= x
+ensures   x%m == m-1 ==> (x+1) % m == 0
+ensures   x%m != m-1 ==> (x+1) % m == x%m + 1
+decreases
+func modSucc(x int, m int) {
+	divIdentity(x, m)
+	if x%m == m-1 {
+		mulSucc(x/m, m)
+		modUnique(x+1, x/m + 1, 0, m)
+	} else {
+		modUnique(x+1, x/m, x%m + 1, m)
+	}
+}
+
+// wrapSucc is modSucc on ring positions. Unlink needs it: it moves n+1
+// positions to find the element it relinks to, while its contract counts the
+// n elements it removes.
+ghost
+requires  0 < m && 0 <= x
+ensures   Wrap(x, m) == m-1 ==> Wrap(x+1, m) == 0
+ensures   Wrap(x, m) != m-1 ==> Wrap(x+1, m) == Wrap(x, m) + 1
+decreases
+func wrapSucc(x int, m int) {
+	modSucc(x, m)
+}
+
 // wrapShift states that a full turn around the ring is the identity on ring
 // positions.
 ghost
@@ -448,4 +476,68 @@ func cutSets(rs seq[*Ring], x *Ring, us seq[*Ring], ks seq[*Ring]) {
 	LemmaElemSetConcat(xs, ks)
 	assert x elem ElemSet(xs)
 	cardJoin(xs, ks)
+}
+
+// ---------------------------------------------------------------------------
+// Re-rooting.
+//
+// Mem(rs, vs) lists the ring from rs[0], and Do reports values from there, so
+// a client holding another element of the ring needs the same ring listed from
+// that element. LemmaRotate provides it: rotating an initialized ring by i
+// positions describes the same elements and links, rooted at rs[i].
+// ---------------------------------------------------------------------------
+
+// rotSets: a rotation has the same element set.
+ghost
+requires  0 <= i && i <= len(rs)
+ensures   ElemSet(rs[i:] ++ rs[:i]) == ElemSet(rs)
+decreases
+func rotSets(rs seq[*Ring], i int) {
+	assert rs == rs[:i] ++ rs[i:]
+	LemmaElemSetConcat(rs[:i], rs[i:])
+	LemmaElemSetConcat(rs[i:], rs[:i])
+}
+
+// rotRead: the elements of a rotation, by position.
+ghost
+requires  0 <= i && i < len(rs) && qs == rs[i:] ++ rs[:i]
+ensures   len(qs) == len(rs)
+ensures   forall k int :: {qs[k]} 0 <= k && k < len(rs)-i ==> qs[k] == rs[k+i]
+ensures   forall k int :: {qs[k]} len(rs)-i <= k && k < len(rs) ==> qs[k] == rs[k+i-len(rs)]
+decreases
+func rotRead(qs seq[*Ring], rs seq[*Ring], i int) {}
+
+// rotReadV is rotRead for the values.
+ghost
+requires  0 <= i && i < len(vs) && qvs == vs[i:] ++ vs[:i]
+ensures   len(qvs) == len(vs)
+ensures   forall k int :: {qvs[k]} 0 <= k && k < len(vs)-i ==> qvs[k] === vs[k+i]
+ensures   forall k int :: {qvs[k]} len(vs)-i <= k && k < len(vs) ==> qvs[k] === vs[k+i-len(vs)]
+decreases
+func rotReadV(qvs seq[any], vs seq[any], i int) {}
+
+// LemmaRotate re-roots an initialized ring at its element rs[i]. An
+// uninitialized ring has one element, so there is nothing to re-root.
+ghost
+requires  0 <= i && i < len(rs)
+requires  Mem(rs, vs) && IsInit(rs, vs)
+ensures   Mem(rs[i:] ++ rs[:i], vs[i:] ++ vs[:i])
+ensures   IsInit(rs[i:] ++ rs[:i], vs[i:] ++ vs[:i])
+decreases
+func LemmaRotate(rs seq[*Ring], vs seq[any], i int) {
+	ghost qs := rs[i:] ++ rs[:i]
+	ghost qvs := vs[i:] ++ vs[:i]
+	ghost m := len(rs)
+	unfold Mem(rs, vs)
+	rotSets(rs, i)
+	rotRead(qs, rs, i)
+	rotReadV(qvs, vs, i)
+	// the seam: the last element of the rotation is the one before rs[i]
+	assert qs[0] == rs[i]
+	assert i > 0 ==> qs[m-1] == rs[i-1] && qs[m-i] == rs[0] && qs[m-i-1] == rs[m-1]
+	assert i == 0 ==> qs[m-1] == rs[m-1]
+	assert m > 1 ==> rs[0].next == rs[1]
+	assert rs[m-1].next == rs[0] && rs[0].prev == rs[m-1]
+	assert i > 0 ==> rs[i].prev == rs[i-1] && rs[i-1].next == rs[i]
+	fold Mem(qs, qvs)
 }

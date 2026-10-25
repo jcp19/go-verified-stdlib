@@ -333,18 +333,33 @@ func (r *Ring) Link(s *Ring /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost v
 // at r.Next(). If n % r.Len() == 0, r remains unchanged.
 // The result is the removed subring. r must not be empty.
 //
-// NOTE: not verified. Unlink is exactly the same-ring case of Link, which
-// Link's contract excludes; see gobra-status.md for how far that proof got and
-// what stopped it. The trusted here is not decoration: it suppresses
-// type-checking of the body, which calls Move and Link without their ghost
-// arguments.
-// @ trusted
-// @ requires  false
-func (r *Ring) Unlink(n int) *Ring {
+// Unlink is the same-ring case of Link, with s n+1 elements ahead of r. The
+// contract is phrased with u = Wrap(n, len(rs)), the n % r.Len() of the doc
+// comment: rs[1:1+u] is the removed subring and r keeps the rest.
+// @ requires  0 < len(rs) && len(rs) == len(vs) && rs[0] == r
+// @ requires  Mem(rs, vs)
+// @ ensures   n <= 0 ==> ret == nil && Mem(rs, vs)
+// @ ensures   n > 0 ==> ret == (len(rs) > 1 ? rs[1] : r) && ret != nil
+// @ ensures   n > 0 ==> Mem(seq[*Ring]{r} ++ rs[1+Wrap(n, len(rs)):], seq[any]{vs[0]} ++ vs[1+Wrap(n, len(rs)):])
+// @ ensures   n > 0 ==> IsInit(seq[*Ring]{r} ++ rs[1+Wrap(n, len(rs)):], seq[any]{vs[0]} ++ vs[1+Wrap(n, len(rs)):])
+// @ ensures   n > 0 && Wrap(n, len(rs)) > 0 ==> Mem(rs[1:1+Wrap(n, len(rs))], vs[1:1+Wrap(n, len(rs))])
+// @ ensures   n > 0 && Wrap(n, len(rs)) > 0 ==> IsInit(rs[1:1+Wrap(n, len(rs))], vs[1:1+Wrap(n, len(rs))])
+// @ decreases
+func (r *Ring) Unlink(n int /*@, ghost rs seq[*Ring], ghost vs seq[any] @*/) (ret *Ring) {
 	if n <= 0 {
 		return nil
 	}
-	return r.Link(r.Move(n + 1))
+	//@ ghost m := len(rs)
+	//@ ghost u := Wrap(n, m)
+	//@ wrapSucc(n, m)
+	s := r.Move(n+1 /*@, rs, vs, 0 @*/)
+	//@ assert u+1 < m ==> s == rs[1+u]
+	//@ assert u+1 == m ==> s == r
+	//@ assert rs == seq[*Ring]{r} ++ rs[1:]
+	//@ assert vs == seq[any]{vs[0]} ++ vs[1:]
+	//@ assert rs[1:] == rs[1:1+u] ++ rs[1+u:]
+	//@ assert vs[1:] == vs[1:1+u] ++ vs[1+u:]
+	return r.Link(s /*@, rs, vs, vs[0], rs[1:], vs[1:], seq[*Ring]{}, seq[any]{}, rs[1:1+u], vs[1:1+u], rs[1+u:], vs[1+u:] @*/)
 }
 
 // Len computes the number of elements in ring r.

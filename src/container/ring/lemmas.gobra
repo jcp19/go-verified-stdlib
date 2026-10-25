@@ -1,0 +1,543 @@
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Enables Gobra in the current file.
+// +gobra
+
+// Ghost lemmas of package container/ring.
+
+package ring
+
+// ---------------------------------------------------------------------------
+// Periodicity of %.
+//
+// wrapShift used to have an empty body, its postcondition left to Z3's axioms
+// for % alone. That stopped working on Z3 >= 4.14 (see
+// src/gobra/TOOLCHAIN.md): the solver can no longer show (k+m) % m == k % m
+// for a symbolic m, which needs the quotient to go up by exactly one. The
+// lemmas below supply that argument as uniqueness of the quotient-remainder
+// decomposition, and are shaped by two things measured on Z3 4.16:
+//
+//   - Silicon's assert checks a fact but does not assume it, so a non-linear
+//     step has to be a lemma, whose postcondition the caller does get.
+//   - Under smt.arith.solver 2 a contradiction that is linear in product terms
+//     such as q1*m still fails while those terms are in the query. linContra
+//     takes them as plain values instead, so the solver sees only a linear
+//     problem.
+//
+// Every dividend here is non-negative. Z3 handles Go's % on those (it is the
+// Euclidean remainder there) and not on negative ones, which is why Wrap is
+// written to avoid them.
+// ---------------------------------------------------------------------------
+
+// mulStep: a larger quotient is at least one whole divisor larger.
+ghost
+requires  0 < m && q1 < q2
+ensures   q1*m + m <= q2*m
+decreases
+func mulStep(q1 int, q2 int, m int) {}
+
+ghost
+ensures   (q+1)*m == q*m + m
+decreases
+func mulSucc(q int, m int) {}
+
+// linContra is the contradiction behind divUnique, with the products passed in
+// as the plain values a and b.
+ghost
+requires  0 <= r1 && r1 < m && 0 <= r2
+requires  a + r1 == b + r2 && a + m <= b
+ensures   false
+decreases
+func linContra(a int, b int, r1 int, r2 int, m int) {}
+
+// divUnique: by a positive divisor, a number has only one remainder in [0, m).
+ghost
+requires  0 < m && 0 <= r1 && r1 < m && 0 <= r2 && r2 < m
+requires  q1*m + r1 == q2*m + r2
+ensures   r1 == r2
+decreases
+func divUnique(q1 int, r1 int, q2 int, r2 int, m int) {
+	if q1 < q2 {
+		mulStep(q1, q2, m)
+		linContra(q1*m, q2*m, r1, r2, m)
+	} else if q2 < q1 {
+		mulStep(q2, q1, m)
+		linContra(q2*m, q1*m, r2, r1, m)
+	}
+}
+
+ghost
+requires  0 < m && 0 <= l
+ensures   l == (l/m)*m + l%m && 0 <= l%m && l%m < m
+decreases
+func divIdentity(l int, m int) {}
+
+// modUnique: any decomposition with a remainder in [0, m) names l % m.
+ghost
+requires  0 < m && 0 <= l && l == q*m + r && 0 <= r && r < m
+ensures   l % m == r
+decreases
+func modUnique(l int, q int, r int, m int) {
+	divIdentity(l, m)
+	divUnique(l/m, l%m, q, r, m)
+}
+
+// modShift: adding the divisor leaves the remainder alone.
+ghost
+requires  0 < m && 0 <= k
+ensures   (k+m) % m == k % m
+decreases
+func modShift(k int, m int) {
+	divIdentity(k, m)
+	mulSucc(k/m, m)
+	modUnique(k+m, k/m + 1, k%m, m)
+}
+
+// modPred: subtracting one steps the remainder back, wrapping from 0 to m-1.
+ghost
+requires  0 < m && 1 <= x
+ensures   x%m == 0 ==> (x-1) % m == m-1
+ensures   x%m != 0 ==> (x-1) % m == x%m - 1
+decreases
+func modPred(x int, m int) {
+	divIdentity(x, m)
+	if x%m == 0 {
+		mulSucc(x/m - 1, m)
+		modUnique(x-1, x/m - 1, m-1, m)
+	} else {
+		modUnique(x-1, x/m, x%m - 1, m)
+	}
+}
+
+// modSucc: adding one steps the remainder forward, wrapping from m-1 to 0.
+ghost
+requires  0 < m && 0 <= x
+ensures   x%m == m-1 ==> (x+1) % m == 0
+ensures   x%m != m-1 ==> (x+1) % m == x%m + 1
+decreases
+func modSucc(x int, m int) {
+	divIdentity(x, m)
+	if x%m == m-1 {
+		mulSucc(x/m, m)
+		modUnique(x+1, x/m + 1, 0, m)
+	} else {
+		modUnique(x+1, x/m, x%m + 1, m)
+	}
+}
+
+// wrapSucc is modSucc on ring positions. Unlink needs it: it moves n+1
+// positions to find the element it relinks to, while its contract counts the
+// n elements it removes.
+ghost
+requires  0 < m && 0 <= x
+ensures   Wrap(x, m) == m-1 ==> Wrap(x+1, m) == 0
+ensures   Wrap(x, m) != m-1 ==> Wrap(x+1, m) == Wrap(x, m) + 1
+decreases
+func wrapSucc(x int, m int) {
+	modSucc(x, m)
+}
+
+// wrapShift states that a full turn around the ring is the identity on ring
+// positions.
+ghost
+requires  0 < m
+ensures   Wrap(k+m, m) == Wrap(k, m)
+decreases
+func wrapShift(k int, m int) {
+	if k >= 0 {
+		modShift(k, m)
+	} else if k+m < 0 {
+		// both negative: Wrap reads (-k-1) % m on each side, one divisor apart
+		modShift(-k-m-1, m)
+	} else {
+		// k+m in [0, m): both sides are k+m without any reduction
+		assert (-k-1) % m == -k-1
+		assert (k+m) % m == k+m
+	}
+}
+
+// wrapNeg: stepping backwards x positions is stepping backwards by x % m.
+// It is what the "Move" block of the test file needs to compare Move(-ni) with
+// Move(-(ni % N)).
+ghost
+requires  0 < m && 0 <= x
+ensures   Wrap(-x, m) == Wrap(-(x % m), m)
+decreases
+func wrapNeg(x int, m int) {
+	if x > 0 {
+		modPred(x, m)
+		divIdentity(x, m)
+		ghost r := x % m
+		if r > 0 {
+			assert (r-1) % m == r-1
+		}
+	}
+}
+
+// stepIsWrap bridges the two descriptions of a walk around the ring: step,
+// which counts the single steps Move actually takes, and Wrap, the "% Len()"
+// of Move's doc comment.
+ghost
+requires  0 < m && 0 <= i && i < m
+ensures   step(i, n, m) == Wrap(i+n, m)
+decreases n < 0 ? -n : n
+func stepIsWrap(i int, n int, m int) {
+	if n == 0 {
+		assert Wrap(i, m) == i
+	} else if n > 0 {
+		ghost i2 := i+1 == m ? 0 : i+1
+		stepIsWrap(i2, n-1, m)
+		assert step(i, n, m) == step(i2, n-1, m)
+		if i+1 == m {
+			wrapShift(n-1, m)
+			assert i+n == (n-1)+m
+		}
+	} else {
+		ghost i2 := i == 0 ? m-1 : i-1
+		stepIsWrap(i2, n+1, m)
+		assert step(i, n, m) == step(i2, n+1, m)
+		if i == 0 {
+			wrapShift(n, m)
+			assert i2+n+1 == n+m
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The element set.
+//
+// Mem keys ownership by ElemSet(rs). The lemmas below are the set algebra that
+// encoding needs, adapted from container/list's. They are pure -- no heap, no
+// permissions -- so each verifies in its own small context, and the work that
+// a position-keyed footprint redoes inside every fold happens once here.
+// ---------------------------------------------------------------------------
+
+// LemmaElemSetConcat distributes ElemSet over sequence concatenation.
+ghost
+ensures   ElemSet(a ++ b) == ElemSet(a) union ElemSet(b)
+decreases len(a)
+func LemmaElemSetConcat(a, b seq[*Ring]) {
+	if len(a) == 0 {
+		assert a ++ b == b
+		assert reveal ElemSet(a) == set[*Ring]{}
+	} else {
+		LemmaElemSetConcat(a[1:], b)
+		assert (a ++ b)[1:] == a[1:] ++ b
+		assert (a ++ b)[0] == a[0]
+		assert reveal ElemSet(a ++ b) == set[*Ring]{a[0]} union ElemSet(a[1:] ++ b)
+		assert reveal ElemSet(a) == set[*Ring]{a[0]} union ElemSet(a[1:])
+	}
+}
+
+// LemmaElemSetSingle: the element set of a one-element sequence. ElemSet is
+// opaque, so folding Mem for a single element needs this.
+ghost
+ensures   ElemSet(seq[*Ring]{x}) == set[*Ring]{x}
+decreases
+func LemmaElemSetSingle(x *Ring) {
+	assert seq[*Ring]{x}[1:] == seq[*Ring]{}
+	assert reveal ElemSet(seq[*Ring]{x}) == set[*Ring]{x} union ElemSet(seq[*Ring]{x}[1:])
+}
+
+// LemmaElemSetCard: a sequence has at least as many entries as its element set.
+ghost
+ensures   len(ElemSet(rs)) <= len(rs)
+decreases len(rs)
+func LemmaElemSetCard(rs seq[*Ring]) {
+	if len(rs) == 0 {
+		assert reveal ElemSet(rs) == set[*Ring]{}
+	} else {
+		LemmaElemSetCard(rs[1:])
+		assert reveal ElemSet(rs) == set[*Ring]{rs[0]} union ElemSet(rs[1:])
+	}
+}
+
+// LemmaDistinct unpacks Mem's cardinality invariant into the pairwise form, at
+// the few sites that need it.
+ghost
+requires  len(ElemSet(rs)) == len(rs)
+ensures   forall a, b int :: {rs[a], rs[b]} 0 <= a && a < b && b < len(rs) ==> rs[a] != rs[b]
+decreases len(rs)
+func LemmaDistinct(rs seq[*Ring]) {
+	if len(rs) > 0 {
+		assert reveal ElemSet(rs) == set[*Ring]{rs[0]} union ElemSet(rs[1:])
+		LemmaElemSetCard(rs[1:])
+		// rs[0] cannot recur in the tail: the union would absorb it and the
+		// cardinality would fall short of len(rs).
+		if rs[0] elem ElemSet(rs[1:]) {
+			assert ElemSet(rs) == ElemSet(rs[1:])
+			assert false
+		}
+		LemmaDistinct(rs[1:])
+		assert forall a int :: {rs[1:][a]} 0 <= a && a < len(rs[1:]) ==> rs[1:][a] == rs[a+1]
+	}
+}
+
+// LemmaNotElem: a pointer that differs from every entry of rs is not in its set.
+ghost
+requires  forall a int :: {rs[a]} 0 <= a && a < len(rs) ==> rs[a] != e
+ensures   !(e elem ElemSet(rs))
+decreases len(rs)
+func LemmaNotElem(rs seq[*Ring], e *Ring) {
+	if len(rs) == 0 {
+		assert reveal ElemSet(rs) == set[*Ring]{}
+	} else {
+		assert forall a int :: {rs[1:][a]} 0 <= a && a < len(rs[1:]) ==> rs[1:][a] == rs[a+1]
+		LemmaNotElem(rs[1:], e)
+		assert reveal ElemSet(rs) == set[*Ring]{rs[0]} union ElemSet(rs[1:])
+	}
+}
+
+// LemmaDistinctCard is LemmaDistinct backwards: a sequence without repeats has
+// as many elements as entries. New needs it to fold the ring it has built.
+ghost
+requires  forall a, b int :: {rs[a], rs[b]} 0 <= a && a < b && b < len(rs) ==> rs[a] != rs[b]
+ensures   len(ElemSet(rs)) == len(rs)
+decreases len(rs)
+func LemmaDistinctCard(rs seq[*Ring]) {
+	if len(rs) > 0 {
+		assert forall a int :: {rs[1:][a]} 0 <= a && a < len(rs[1:]) ==> rs[1:][a] == rs[a+1]
+		LemmaNotElem(rs[1:], rs[0])
+		LemmaDistinctCard(rs[1:])
+		assert reveal ElemSet(rs) == set[*Ring]{rs[0]} union ElemSet(rs[1:])
+	}
+}
+
+// LemmaElemSetOnly: every element of ElemSet(rs) is some rs[i]. New needs it to
+// hand a footprint keyed by position over to Mem, which keys it by the set.
+ghost
+ensures   forall q *Ring :: {q elem ElemSet(rs)} q elem ElemSet(rs) ==>
+	exists i int :: {rs[i]} 0 <= i && i < len(rs) && rs[i] == q
+decreases len(rs)
+func LemmaElemSetOnly(rs seq[*Ring]) {
+	if len(rs) == 0 {
+		assert reveal ElemSet(rs) == set[*Ring]{}
+	} else {
+		LemmaElemSetOnly(rs[1:])
+		assert reveal ElemSet(rs) == set[*Ring]{rs[0]} union ElemSet(rs[1:])
+		assert forall a int :: {rs[1:][a]} 0 <= a && a < len(rs[1:]) ==> rs[1:][a] == rs[a+1]
+	}
+}
+
+// idxEq: in a sequence without repeats, two entries are equal exactly when
+// their positions are.
+ghost
+requires  forall a, b int :: {rs[a], rs[b]} 0 <= a && a < b && b < len(rs) ==> rs[a] != rs[b]
+requires  0 <= i && i < len(rs) && 0 <= j && j < len(rs)
+ensures   (rs[i] == rs[j]) == (i == j)
+decreases
+func idxEq(rs seq[*Ring], i int, j int) {}
+
+// cardSplit and cardJoin: a full element set splits into two full, disjoint
+// halves, and two such halves join back into a full one.
+ghost
+requires  len(ElemSet(a ++ b)) == len(a) + len(b)
+ensures   len(ElemSet(a)) == len(a) && len(ElemSet(b)) == len(b)
+ensures   ElemSet(a) intersection ElemSet(b) == set[*Ring]{}
+decreases
+func cardSplit(a, b seq[*Ring]) {
+	LemmaElemSetConcat(a, b)
+	LemmaElemSetCard(a)
+	LemmaElemSetCard(b)
+}
+
+ghost
+requires  len(ElemSet(a)) == len(a) && len(ElemSet(b)) == len(b)
+requires  ElemSet(a) intersection ElemSet(b) == set[*Ring]{}
+ensures   len(ElemSet(a ++ b)) == len(a) + len(b)
+decreases
+func cardJoin(a, b seq[*Ring]) {
+	LemmaElemSetConcat(a, b)
+}
+
+// ---------------------------------------------------------------------------
+// Splicing two rings into one.
+//
+// Link's different-ring case merges two footprints. The lemmas below are the
+// bookkeeping that merge needs: that the two rings are disjoint, and what the
+// sequences of the merged ring are in terms of the sequences the two
+// footprints are indexed by. Splitting them out of Link is what keeps its
+// proof context small enough to terminate.
+// ---------------------------------------------------------------------------
+
+// memDisjoint reads the disjointness of two rings off the fact that both are
+// held at once: an element of both would carry acc twice.
+ghost
+requires  Mem(rs, vs) && Mem(ss, ws)
+ensures   Mem(rs, vs) && Mem(ss, ws)
+ensures   forall t, u int :: {rs[t], ss[u]} 0 <= t && t < len(rs) && 0 <= u && u < len(ss) ==>
+	rs[t] != ss[u]
+ensures   ElemSet(rs) intersection ElemSet(ss) == set[*Ring]{}
+decreases
+func memDisjoint(rs seq[*Ring], vs seq[any], ss seq[*Ring], ws seq[any]) {
+	unfold Mem(rs, vs)
+	unfold Mem(ss, ws)
+	assert forall t, u int :: {rs[t], ss[u]} 0 <= t && t < len(rs) && 0 <= u && u < len(ss) ==>
+		rs[t] != ss[u]
+	// The same at the level of the sets: an element of both is some rs[t] and
+	// some ss[u] at once.
+	LemmaElemSetOnly(rs)
+	LemmaElemSetOnly(ss)
+	fold Mem(rs, vs)
+	fold Mem(ss, ws)
+}
+
+// spliceSets: the set bookkeeping of Link's different-ring case. The ring it
+// produces, r ++ ss ++ ts, is full because rs and ss are and do not overlap.
+ghost
+requires  rs == seq[*Ring]{x} ++ ts
+requires  ars == seq[*Ring]{x} ++ ss ++ ts
+requires  len(ElemSet(rs)) == len(rs) && len(ElemSet(ss)) == len(ss)
+requires  ElemSet(rs) intersection ElemSet(ss) == set[*Ring]{}
+ensures   len(ElemSet(ars)) == len(ars)
+ensures   ElemSet(ars) == ElemSet(rs) union ElemSet(ss)
+decreases
+func spliceSets(rs seq[*Ring], ss seq[*Ring], ars seq[*Ring], x *Ring, ts seq[*Ring]) {
+	ghost xs := seq[*Ring]{x}
+	cardSplit(xs, ts)
+	LemmaElemSetSingle(x)
+	LemmaElemSetConcat(xs, ts)
+	LemmaElemSetConcat(xs, ss)
+	LemmaElemSetConcat(xs ++ ss, ts)
+	cardJoin(xs, ss)
+	cardJoin(xs ++ ss, ts)
+}
+
+// spliceRead: the merged ring is r, then all of ss, then the rest of rs.
+ghost
+requires  rs == seq[*Ring]{x} ++ ts
+requires  ars == seq[*Ring]{x} ++ ss ++ ts
+ensures   len(ars) == len(rs) + len(ss)
+ensures   forall t int :: {ars[t]} 0 <= t && t < len(ars) ==>
+	ars[t] == (t == 0 ? rs[0] : (t <= len(ss) ? ss[t-1] : rs[t-len(ss)]))
+decreases
+func spliceRead(ars seq[*Ring], rs seq[*Ring], x *Ring, ss seq[*Ring], ts seq[*Ring]) {
+}
+
+// spliceReadV is spliceRead on the values.
+ghost
+requires  vs == seq[any]{v} ++ tvs
+requires  avs == seq[any]{v} ++ ws ++ tvs
+ensures   len(avs) == len(vs) + len(ws)
+ensures   forall t int :: {avs[t]} 0 <= t && t < len(avs) ==>
+	avs[t] === (t == 0 ? vs[0] : (t <= len(ws) ? ws[t-1] : vs[t-len(ws)]))
+decreases
+func spliceReadV(avs seq[any], vs seq[any], v any, ws seq[any], tvs seq[any]) {
+}
+
+// ---------------------------------------------------------------------------
+// Cutting one ring into two.
+//
+// Link's same-ring case keeps r and everything from s on, and unlinks the
+// elements in between into a ring of their own. With ownership keyed by the
+// element set, the cut is set algebra: the three parts of rs -- r, the
+// unlinked us and the kept ks -- are full and pairwise disjoint, so each of
+// the two rings left behind is full too, and each takes its permissions from
+// rs's footprint by membership alone.
+// ---------------------------------------------------------------------------
+
+// cutRead: where the parts of rs = r ++ us ++ ks sit in rs.
+ghost
+requires  rs == seq[*Ring]{x} ++ us ++ ks
+ensures   len(rs) == 1 + len(us) + len(ks)
+ensures   rs[0] == x
+ensures   forall t int :: {us[t]} 0 <= t && t < len(us) ==> us[t] == rs[t+1]
+ensures   forall t int :: {ks[t]} 0 <= t && t < len(ks) ==> ks[t] == rs[t+1+len(us)]
+decreases
+func cutRead(rs seq[*Ring], x *Ring, us seq[*Ring], ks seq[*Ring]) {}
+
+// cutReadV is cutRead on the values.
+ghost
+requires  vs == seq[any]{v} ++ uvs ++ kvs
+ensures   len(vs) == 1 + len(uvs) + len(kvs) && vs[0] === v
+ensures   forall t int :: {uvs[t]} 0 <= t && t < len(uvs) ==> uvs[t] === vs[t+1]
+ensures   forall t int :: {kvs[t]} 0 <= t && t < len(kvs) ==> kvs[t] === vs[t+1+len(uvs)]
+decreases
+func cutReadV(vs seq[any], v any, uvs seq[any], kvs seq[any]) {}
+
+// cutSets: the set bookkeeping of the cut.
+ghost
+requires  rs == seq[*Ring]{x} ++ us ++ ks
+requires  len(ElemSet(rs)) == len(rs)
+ensures   len(ElemSet(seq[*Ring]{x} ++ ks)) == 1 + len(ks)
+ensures   len(ElemSet(us)) == len(us)
+ensures   ElemSet(rs) == ElemSet(seq[*Ring]{x} ++ ks) union ElemSet(us)
+ensures   ElemSet(seq[*Ring]{x} ++ ks) intersection ElemSet(us) == set[*Ring]{}
+decreases
+func cutSets(rs seq[*Ring], x *Ring, us seq[*Ring], ks seq[*Ring]) {
+	ghost xs := seq[*Ring]{x}
+	assert rs == (xs ++ us) ++ ks
+	cardSplit(xs ++ us, ks)
+	cardSplit(xs, us)
+	LemmaElemSetConcat(xs ++ us, ks)
+	LemmaElemSetConcat(xs, us)
+	LemmaElemSetConcat(xs, ks)
+	assert x elem ElemSet(xs)
+	cardJoin(xs, ks)
+}
+
+// ---------------------------------------------------------------------------
+// Re-rooting.
+//
+// Mem(rs, vs) lists the ring from rs[0], and Do reports values from there, so
+// a client holding another element of the ring needs the same ring listed from
+// that element. LemmaRotate provides it: rotating an initialized ring by i
+// positions describes the same elements and links, rooted at rs[i].
+// ---------------------------------------------------------------------------
+
+// rotSets: a rotation has the same element set.
+ghost
+requires  0 <= i && i <= len(rs)
+ensures   ElemSet(rs[i:] ++ rs[:i]) == ElemSet(rs)
+decreases
+func rotSets(rs seq[*Ring], i int) {
+	assert rs == rs[:i] ++ rs[i:]
+	LemmaElemSetConcat(rs[:i], rs[i:])
+	LemmaElemSetConcat(rs[i:], rs[:i])
+}
+
+// rotRead: the elements of a rotation, by position.
+ghost
+requires  0 <= i && i < len(rs) && qs == rs[i:] ++ rs[:i]
+ensures   len(qs) == len(rs)
+ensures   forall k int :: {qs[k]} 0 <= k && k < len(rs)-i ==> qs[k] == rs[k+i]
+ensures   forall k int :: {qs[k]} len(rs)-i <= k && k < len(rs) ==> qs[k] == rs[k+i-len(rs)]
+decreases
+func rotRead(qs seq[*Ring], rs seq[*Ring], i int) {}
+
+// rotReadV is rotRead for the values.
+ghost
+requires  0 <= i && i < len(vs) && qvs == vs[i:] ++ vs[:i]
+ensures   len(qvs) == len(vs)
+ensures   forall k int :: {qvs[k]} 0 <= k && k < len(vs)-i ==> qvs[k] === vs[k+i]
+ensures   forall k int :: {qvs[k]} len(vs)-i <= k && k < len(vs) ==> qvs[k] === vs[k+i-len(vs)]
+decreases
+func rotReadV(qvs seq[any], vs seq[any], i int) {}
+
+// LemmaRotate re-roots an initialized ring at its element rs[i]. An
+// uninitialized ring has one element, so there is nothing to re-root.
+ghost
+requires  0 <= i && i < len(rs)
+requires  Mem(rs, vs) && IsInit(rs, vs)
+ensures   Mem(rs[i:] ++ rs[:i], vs[i:] ++ vs[:i])
+ensures   IsInit(rs[i:] ++ rs[:i], vs[i:] ++ vs[:i])
+decreases
+func LemmaRotate(rs seq[*Ring], vs seq[any], i int) {
+	ghost qs := rs[i:] ++ rs[:i]
+	ghost qvs := vs[i:] ++ vs[:i]
+	ghost m := len(rs)
+	unfold Mem(rs, vs)
+	rotSets(rs, i)
+	rotRead(qs, rs, i)
+	rotReadV(qvs, vs, i)
+	// the seam: the last element of the rotation is the one before rs[i]
+	assert qs[0] == rs[i]
+	assert i > 0 ==> qs[m-1] == rs[i-1] && qs[m-i] == rs[0] && qs[m-i-1] == rs[m-1]
+	assert i == 0 ==> qs[m-1] == rs[m-1]
+	assert m > 1 ==> rs[0].next == rs[1]
+	assert rs[m-1].next == rs[0] && rs[0].prev == rs[m-1]
+	assert i > 0 ==> rs[i].prev == rs[i-1] && rs[i-1].next == rs[i]
+	fold Mem(qs, qvs)
+}

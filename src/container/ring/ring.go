@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// +gobra
+
 // Package ring implements operations on circular lists.
 package ring
 
@@ -16,62 +18,185 @@ type Ring struct {
 	Value      any // for use by client; untouched by this library
 }
 
-func (r *Ring) init() *Ring {
+// init links r to itself. It is the lazy initialization of the zero Ring
+// value, which the doc comment of Ring declares to be a one-element ring.
+// @ preserves acc(r)
+// @ ensures   ret == r
+// @ ensures   r.next == r && r.prev == r
+// @ ensures   r.Value === old(r.Value)
+// @ decreases
+func (r *Ring) init() (ret *Ring) {
 	r.next = r
 	r.prev = r
 	return r
 }
 
 // Next returns the next ring element. r must not be empty.
-func (r *Ring) Next() *Ring {
+// @ preserves Mem(rs, vs)
+// @ requires  0 <= i && i < len(rs) && rs[i] == r
+// @ ensures   IsInit(rs, vs)
+// @ ensures   ret == rs[i+1 < len(rs) ? i+1 : 0] && ret != nil
+// @ decreases
+func (r *Ring) Next( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (ret *Ring) {
+	//@ unfold Mem(rs, vs)
+	// In a ring of more than one element every next pointer is set, so a nil
+	// next can only be the lazily initialized zero value.
+	//@ assert len(rs) > 1 ==> rs[0].next == rs[1] && rs[1] != nil
+	//@ assert len(rs) > 1 && i < len(rs)-1 ==> rs[i].next == rs[i+1] && rs[i+1] != nil
+	//@ assert len(rs) > 1 && i == len(rs)-1 ==> rs[i].next == rs[0] && rs[0] != nil
 	if r.next == nil {
-		return r.init()
+		//@ assert len(rs) == 1 && i == 0
+		res := r.init()
+		//@ fold Mem(rs, vs)
+		return res
 	}
-	return r.next
+	res := r.next
+	//@ assert i == len(rs)-1 ==> res == rs[0]
+	//@ fold Mem(rs, vs)
+	return res
 }
 
 // Prev returns the previous ring element. r must not be empty.
-func (r *Ring) Prev() *Ring {
+// @ preserves Mem(rs, vs)
+// @ requires  0 <= i && i < len(rs) && rs[i] == r
+// @ ensures   IsInit(rs, vs)
+// @ ensures   ret == rs[i > 0 ? i-1 : len(rs)-1] && ret != nil
+// @ decreases
+func (r *Ring) Prev( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (ret *Ring) {
+	//@ unfold Mem(rs, vs)
+	//@ assert len(rs) > 1 ==> rs[0].next == rs[1] && rs[1] != nil
+	//@ assert len(rs) > 1 && i < len(rs)-1 ==> rs[i].next == rs[i+1] && rs[i+1] != nil
+	//@ assert len(rs) > 1 && i == len(rs)-1 ==> rs[i].next == rs[0] && rs[0] != nil
 	if r.next == nil {
-		return r.init()
+		//@ assert len(rs) == 1 && i == 0
+		res := r.init()
+		//@ fold Mem(rs, vs)
+		return res
 	}
-	return r.prev
+	//@ assert i > 0 ==> rs[i].prev == rs[i-1]
+	res := r.prev
+	//@ fold Mem(rs, vs)
+	return res
 }
 
 // Move moves n % r.Len() elements backward (n < 0) or forward (n >= 0)
 // in the ring and returns that ring element. r must not be empty.
 //
-func (r *Ring) Move(n int) *Ring {
+// Note on n: the loops below drive the parameter itself to zero, so the n of
+// the postcondition is the argument as passed (Gobra reads a parameter in a
+// postcondition in the pre-state), while the n of the loop invariants is the
+// steps still to take. n0 holds the entry value for the invariants.
+// @ preserves Mem(rs, vs)
+// @ requires  0 <= i && i < len(rs) && rs[i] == r
+// @ ensures   IsInit(rs, vs)
+// @ ensures   ret == rs[Wrap(i+n, len(rs))] && ret != nil
+// @ decreases
+func (r *Ring) Move(n int /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/) (ret *Ring) {
+	//@ ghost m := len(rs)
+	//@ ghost n0 := n
+	//@ ghost idx := i
+	//@ unfold Mem(rs, vs)
+	//@ assert m > 1 ==> rs[0].next == rs[1] && rs[1] != nil
+	//@ assert m > 1 && i < m-1 ==> rs[i].next == rs[i+1] && rs[i+1] != nil
+	//@ assert m > 1 && i == m-1 ==> rs[i].next == rs[0] && rs[0] != nil
 	if r.next == nil {
-		return r.init()
+		//@ assert m == 1 && i == 0
+		res := r.init()
+		//@ fold Mem(rs, vs)
+		//@ assert Wrap(i+n0, m) == 0
+		return res
 	}
+	//@ fold Mem(rs, vs)
 	switch {
 	case n < 0:
+		//@ invariant Mem(rs, vs)
+		//@ invariant IsInit(rs, vs)
+		//@ invariant 0 <= idx && idx < m && r == rs[idx]
+		//@ invariant n <= 0
+		//@ invariant step(idx, n, m) == step(i, n0, m)
+		//@ decreases -n
 		for ; n < 0; n++ {
+			//@ ghost idx2 := idx == 0 ? m-1 : idx-1
+			//@ unfold Mem(rs, vs)
+			//@ assert idx > 0 ==> rs[idx].prev == rs[idx-1]
+			//@ assert idx == 0 ==> rs[0].prev == rs[m-1]
 			r = r.prev
+			//@ fold Mem(rs, vs)
+			//@ idx = idx2
 		}
 	case n > 0:
+		//@ invariant Mem(rs, vs)
+		//@ invariant IsInit(rs, vs)
+		//@ invariant 0 <= idx && idx < m && r == rs[idx]
+		//@ invariant n >= 0
+		//@ invariant step(idx, n, m) == step(i, n0, m)
+		//@ decreases n
 		for ; n > 0; n-- {
+			//@ ghost idx2 := idx+1 == m ? 0 : idx+1
+			//@ unfold Mem(rs, vs)
+			//@ assert idx < m-1 ==> rs[idx].next == rs[idx+1]
+			//@ assert idx == m-1 ==> rs[idx].next == rs[0]
 			r = r.next
+			//@ fold Mem(rs, vs)
+			//@ idx = idx2
 		}
 	}
+	//@ assert step(idx, n, m) == idx
+	//@ stepIsWrap(i, n0, m)
 	return r
 }
 
 // New creates a ring of n elements.
-func New(n int) *Ring {
+// @ ensures   n <= 0 ==> ret == nil && len(rs) == 0 && len(vs) == 0
+// @ ensures   n > 0 ==> ret != nil && Mem(rs, vs) && len(rs) == n && len(vs) == n && rs[0] == ret
+// @ ensures   n > 0 ==> IsInit(rs, vs)
+// @ ensures   n > 0 ==> (forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> vs[k] == nil)
+// @ decreases
+func New(n int) ( /*@ ghost rs seq[*Ring], ghost vs seq[any], @*/ ret *Ring) {
 	if n <= 0 {
-		return nil
+		return /*@ seq[*Ring]{}, seq[any]{}, @*/ nil
 	}
 	r := new(Ring)
 	p := r
+	// Gobra cannot type a bare nil inside a seq[any] literal, so the (nil)
+	// value of the freshly allocated element is read out of the element
+	// itself.
+	//@ rs = seq[*Ring]{r}
+	//@ vs = seq[any]{r.Value}
+
+	//@ invariant 1 <= i && i <= n
+	//@ invariant len(rs) == i && len(vs) == i
+	//@ invariant rs[0] == r && rs[i-1] == p
+	// The elements are pairwise distinct. This conjunct needs no permission, and
+	// it has to come before the quantified permission below: Silicon consumes
+	// invariant conjuncts left to right, and re-inhaling that permission for the
+	// extended sequence is exactly what needs the injectivity of k |-> rs[k].
+	//@ invariant forall k, l int :: {rs[k], rs[l]} 0 <= k && k < len(rs) && 0 <= l && l < len(rs) && rs[k] == rs[l] ==> k == l
+	//@ invariant forall k int :: {rs[k]} 0 <= k && k < len(rs) ==> acc(rs[k]) && rs[k] != nil && rs[k].Value === vs[k]
+	//@ invariant forall k, l int :: {rs[k], rs[l]} 0 <= k && k < len(rs) && 0 <= l && l < len(rs) && l == k+1 ==> rs[k].next == rs[l] && rs[l].prev == rs[k]
+	//@ invariant rs[0].prev == nil && rs[i-1].next == nil
+	//@ invariant forall k int :: {vs[k]} 0 <= k && k < len(vs) ==> vs[k] == nil
+	//@ decreases n - i
 	for i := 1; i < n; i++ {
 		p.next = &Ring{prev: p}
 		p = p.next
+		//@ rs = rs ++ seq[*Ring]{p}
+		//@ vs = vs ++ seq[any]{p.Value}
 	}
+	//@ assert len(rs) == n && rs[0] == r && rs[len(rs)-1] == p
 	p.next = r
 	r.prev = p
-	return r
+	// Closing the ring makes every next pointer non-nil, so the ring is
+	// initialized rather than a lazily initialized zero value. For n == 1 the
+	// single element is linked to itself.
+	//@ assert len(rs) > 1 ==> rs[0].next == rs[1] && rs[1] != nil
+	//@ assert len(rs) == 1 ==> rs[0] == p && rs[0].next == rs[0] && rs[0] != nil
+	//@ assert rs[0].next != nil
+	// Mem keys ownership by the element set; the loop kept it by position.
+	//@ LemmaDistinctCard(rs)
+	//@ LemmaElemSetOnly(rs)
+	//@ fold Mem(rs, vs)
+	return /*@ rs, vs, @*/ r
 }
 
 // Link connects ring r with ring s such that r.Next()
@@ -90,16 +215,116 @@ func New(n int) *Ring {
 // after r. The result points to the element following the
 // last element of s after insertion.
 //
-func (r *Ring) Link(s *Ring) *Ring {
-	n := r.Next()
+// The three cases of the doc comment are told apart by the ghost arguments,
+// which also carry the decomposition of r's ring that the results are phrased
+// in: ts is rs without its first element r. When s is on a different ring, ss
+// is that ring. When s is on r's own ring, ss is empty and ts splits as
+// us ++ ks: the elements Link unlinks, then the ones r keeps, which start at s.
+// @ requires  rs == seq[*Ring]{r} ++ ts && vs == seq[any]{v0} ++ tvs
+// @ requires  Mem(rs, vs)
+// @ requires  s == nil ==> len(ss) == 0
+// @ requires  s != nil && len(ss) > 0 ==> Mem(ss, ws) && ss[0] == s
+// @ requires  s != nil && len(ss) == 0 ==> ts == us ++ ks && tvs == uvs ++ kvs && len(us) == len(uvs)
+// @ requires  s != nil && len(ss) == 0 && len(ks) > 0 ==> s == ks[0]
+// @ requires  s != nil && len(ss) == 0 && len(ks) == 0 ==> s == r
+// @ ensures   ret == (len(ts) > 0 ? ts[0] : r) && ret != nil
+// @ ensures   s == nil ==> Mem(rs, vs) && IsInit(rs, vs)
+// @ ensures   s != nil && len(ss) > 0 ==> Mem(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+// @ ensures   s != nil && len(ss) > 0 ==> IsInit(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+// @ ensures   s != nil && len(ss) == 0 ==> Mem(seq[*Ring]{r} ++ ks, seq[any]{v0} ++ kvs)
+// @ ensures   s != nil && len(ss) == 0 ==> IsInit(seq[*Ring]{r} ++ ks, seq[any]{v0} ++ kvs)
+// @ ensures   s != nil && len(ss) == 0 && len(us) > 0 ==> Mem(us, uvs) && IsInit(us, uvs)
+// @ decreases
+func (r *Ring) Link(s *Ring /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost v0 any, ghost ts seq[*Ring], ghost tvs seq[any], ghost ss seq[*Ring], ghost ws seq[any], ghost us seq[*Ring], ghost uvs seq[any], ghost ks seq[*Ring], ghost kvs seq[any] @*/) (ret *Ring) {
+	//@ ghost k := len(ss)
+	n := r.Next( /*@ rs, vs, 0 @*/ )
 	if s != nil {
-		p := s.Prev()
+		//@ ghost if k == 0 {
+		//@ 	assert rs == seq[*Ring]{r} ++ us ++ ks
+		//@ 	cutRead(rs, r, us, ks)
+		//@ }
+		p := s.Prev( /*@ k > 0 ? ss : rs, k > 0 ? ws : vs, k > 0 ? 0 : (len(ks) > 0 ? 1+len(us) : 0) @*/ )
+		// The surgery is verified as an outline, against its own contract:
+		// inside, the context is that contract alone, not everything Next and
+		// Prev left behind on the way here. The contract names the four
+		// handles by position.
+		//@ requires rs == seq[*Ring]{r} ++ ts && vs == seq[any]{v0} ++ tvs
+		//@ requires Mem(rs, vs) && IsInit(rs, vs)
+		//@ requires k == len(ss) && s != nil
+		//@ requires len(rs) > 1 ==> n == rs[1]
+		//@ requires len(rs) == 1 ==> n == r
+		//@ requires k > 0 ==> Mem(ss, ws) && ss[0] == s && p == ss[len(ss)-1]
+		//@ requires k == 0 ==> ts == us ++ ks && tvs == uvs ++ kvs && len(us) == len(uvs) && p == rs[len(us)]
+		//@ requires k == 0 && len(ks) > 0 ==> s == ks[0]
+		//@ requires k == 0 && len(ks) == 0 ==> s == r
+		//@ ensures  k > 0 ==> Mem(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+		//@ ensures  k > 0 ==> IsInit(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+		//@ ensures  k == 0 ==> Mem(seq[*Ring]{r} ++ ks, seq[any]{v0} ++ kvs)
+		//@ ensures  k == 0 ==> IsInit(seq[*Ring]{r} ++ ks, seq[any]{v0} ++ kvs)
+		//@ ensures  k == 0 && len(us) > 0 ==> Mem(us, uvs) && IsInit(us, uvs)
+		//@ decreases
+		//@ outline (
+		//@ ghost mrs := seq[*Ring]{r} ++ ss ++ ts
+		//@ ghost mvs := seq[any]{v0} ++ ws ++ tvs
+		//@ ghost crs := seq[*Ring]{r} ++ ks
+		//@ ghost cvs := seq[any]{v0} ++ kvs
+		//@ ghost if k > 0 {
+		//@ 	memDisjoint(rs, vs, ss, ws)
+		//@ 	spliceRead(mrs, rs, r, ss, ts)
+		//@ 	spliceReadV(mvs, vs, v0, ws, tvs)
+		//@ 	unfold Mem(rs, vs)
+		//@ 	unfold Mem(ss, ws)
+		//@ 	spliceSets(rs, ss, mrs, r, ts)
+		//@ 	LemmaDistinct(rs)
+		//@ 	LemmaDistinct(ss)
+		//@ } else {
+		//@ 	assert rs == seq[*Ring]{r} ++ us ++ ks
+		//@ 	assert vs == seq[any]{v0} ++ uvs ++ kvs
+		//@ 	cutRead(rs, r, us, ks)
+		//@ 	cutRead(crs, r, seq[*Ring]{}, ks)
+		//@ 	cutReadV(vs, v0, uvs, kvs)
+		//@ 	cutReadV(cvs, v0, seq[any]{}, kvs)
+		//@ 	ghost if len(us) == 0 && len(ks) == 0 {
+		//@ 		unfold Mem(rs, vs)
+		//@ 		cutSets(rs, r, us, ks)
+		//@ 	} else if len(us) == 0 {
+		//@ 		unfold Mem(rs, vs)
+		//@ 		cutSets(rs, r, us, ks)
+		//@ 		LemmaDistinct(rs)
+		//@ 		idxEq(rs, 0, 1)
+		//@ 	} else if len(ks) == 0 {
+		//@ 		unfold Mem(rs, vs)
+		//@ 		cutSets(rs, r, us, ks)
+		//@ 		LemmaDistinct(rs)
+		//@ 		idxEq(rs, 0, 1)
+		//@ 		idxEq(rs, 0, len(us))
+		//@ 	} else {
+		//@ 		unfold Mem(rs, vs)
+		//@ 		cutSets(rs, r, us, ks)
+		//@ 		LemmaDistinct(rs)
+		//@ 		idxEq(rs, 0, 1)
+		//@ 		idxEq(rs, 0, len(us))
+		//@ 		idxEq(rs, 0, 1+len(us))
+		//@ 		idxEq(rs, 1, 1+len(us))
+		//@ 		idxEq(rs, len(us), 1+len(us))
+		//@ 	}
+		//@ }
 		// Note: Cannot use multiple assignment because
 		// evaluation order of LHS is not specified.
 		r.next = s
 		s.prev = r
 		n.prev = p
 		p.next = n
+		//@ ghost if k > 0 {
+		//@ 	assert mrs[0].next != nil
+		//@ 	fold Mem(mrs, mvs)
+		//@ } else {
+		//@ 	fold Mem(crs, cvs)
+		//@ 	ghost if len(us) > 0 {
+		//@ 		fold Mem(us, uvs)
+		//@ 	}
+		//@ }
+		//@ )
 	}
 	return n
 }
@@ -108,34 +333,129 @@ func (r *Ring) Link(s *Ring) *Ring {
 // at r.Next(). If n % r.Len() == 0, r remains unchanged.
 // The result is the removed subring. r must not be empty.
 //
-func (r *Ring) Unlink(n int) *Ring {
+// Unlink is the same-ring case of Link, with s n+1 elements ahead of r. The
+// contract is phrased with u = Wrap(n, len(rs)), the n % r.Len() of the doc
+// comment: rs[1:1+u] is the removed subring and r keeps the rest.
+// @ requires  0 < len(rs) && len(rs) == len(vs) && rs[0] == r
+// @ requires  Mem(rs, vs)
+// @ ensures   n <= 0 ==> ret == nil && Mem(rs, vs)
+// @ ensures   n > 0 ==> ret == (len(rs) > 1 ? rs[1] : r) && ret != nil
+// @ ensures   n > 0 ==> Mem(seq[*Ring]{r} ++ rs[1+Wrap(n, len(rs)):], seq[any]{vs[0]} ++ vs[1+Wrap(n, len(rs)):])
+// @ ensures   n > 0 ==> IsInit(seq[*Ring]{r} ++ rs[1+Wrap(n, len(rs)):], seq[any]{vs[0]} ++ vs[1+Wrap(n, len(rs)):])
+// @ ensures   n > 0 && Wrap(n, len(rs)) > 0 ==> Mem(rs[1:1+Wrap(n, len(rs))], vs[1:1+Wrap(n, len(rs))])
+// @ ensures   n > 0 && Wrap(n, len(rs)) > 0 ==> IsInit(rs[1:1+Wrap(n, len(rs))], vs[1:1+Wrap(n, len(rs))])
+// @ decreases
+func (r *Ring) Unlink(n int /*@, ghost rs seq[*Ring], ghost vs seq[any] @*/) (ret *Ring) {
 	if n <= 0 {
 		return nil
 	}
-	return r.Link(r.Move(n + 1))
+	//@ ghost m := len(rs)
+	//@ ghost u := Wrap(n, m)
+	//@ wrapSucc(n, m)
+	s := r.Move(n + 1 /*@, rs, vs, 0 @*/)
+	//@ assert u+1 < m ==> s == rs[1+u]
+	//@ assert u+1 == m ==> s == r
+	//@ assert rs == seq[*Ring]{r} ++ rs[1:]
+	//@ assert vs == seq[any]{vs[0]} ++ vs[1:]
+	//@ assert rs[1:] == rs[1:1+u] ++ rs[1+u:]
+	//@ assert vs[1:] == vs[1:1+u] ++ vs[1+u:]
+	return r.Link(s /*@, rs, vs, vs[0], rs[1:], vs[1:], seq[*Ring]{}, seq[any]{}, rs[1:1+u], vs[1:1+u], rs[1+u:], vs[1+u:] @*/)
 }
 
 // Len computes the number of elements in ring r.
 // It executes in time proportional to the number of elements.
 //
-func (r *Ring) Len() int {
+// @ preserves r != nil ==> Mem(rs, vs)
+// @ requires  r != nil ==> 0 <= i && i < len(rs) && rs[i] == r
+// @ requires  r == nil ==> len(rs) == 0
+// @ ensures   r != nil ==> IsInit(rs, vs)
+// @ ensures   res == len(rs)
+// @ decreases
+func (r *Ring) Len( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ ) (res int) {
 	n := 0
 	if r != nil {
 		n = 1
-		for p := r.Next(); p != r; p = p.next {
+		//@ ghost m := len(rs)
+		//@ invariant Mem(rs, vs)
+		//@ invariant IsInit(rs, vs)
+		//@ invariant 1 <= n && n <= m
+		//@ invariant p == rs[i+n < m ? i+n : i+n-m]
+		//@ decreases m - n
+		for p := r.Next( /*@ rs, vs, i @*/ ); p != r; p = /*@ unfolding Mem(rs, vs) in @*/ p.next {
+			//@ assert n < m
 			n++
+			//@ ghost q := i+n-1 < m ? i+n-1 : i+n-1-m
+			//@ ghost q2 := i+n < m ? i+n : i+n-m
+			//@ unfold Mem(rs, vs)
+			//@ assert q < m-1 ==> rs[q].next == rs[q+1]
+			//@ assert q == m-1 ==> rs[q].next == rs[0]
+			//@ fold Mem(rs, vs)
+			//@ assert (unfolding Mem(rs, vs) in p.next) == rs[q2]
 		}
+		// The walk is back at r. The elements are distinct, so the position it
+		// is at is r's own, which is what makes n the length.
+		//@ unfold Mem(rs, vs)
+		//@ LemmaDistinct(rs)
+		//@ idxEq(rs, i+n < m ? i+n : i+n-m, i)
+		//@ assert rs[i+n < m ? i+n : i+n-m] == rs[i]
+		//@ fold Mem(rs, vs)
 	}
 	return n
 }
 
 // Do calls function f on each element of the ring, in forward order.
 // The behavior of Do is undefined if f changes *r.
-func (r *Ring) Do(f func(any)) {
+// The ghost argument vis is the client's side of the closure specification in
+// spec.gobra: vis.Seen(calls) is its invariant after f has been applied to
+// exactly the values calls, and vis.Accepts says which values its f can be
+// applied to at all. Do reports the values in the order it visits them, so
+// unlike the other methods it needs the sequence to start at the receiver:
+// rs[0] == r.
+// @ preserves r != nil ==> Mem(rs, vs)
+// @ requires  r != nil ==> 0 < len(rs) && rs[0] == r
+// @ requires  r == nil ==> len(rs) == 0 && len(vs) == 0
+// @ requires  vis != nil && vis.Seen(seq[any]{})
+// @ requires  f implements VisitSpec{vis}
+// @ requires  forall t int :: {vs[t]} 0 <= t && t < len(vs) ==> vis.Accepts(vs[t])
+// @ ensures   r != nil ==> IsInit(rs, vs)
+// @ ensures   vis.Seen(vs)
+// @ decreases
+func (r *Ring) Do(f func( /*@ ghost seq[any], @*/ any) /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost vis Visitor @*/) {
 	if r != nil {
-		f(r.Value)
-		for p := r.Next(); p != r; p = p.next {
-			f(p.Value)
+		//@ ghost m := len(rs)
+		//@ ghost c := 1
+		//@ ghost seen := seq[any]{}
+		//@ unfold Mem(rs, vs)
+		//@ assert r.Value === vs[0]
+		//@ fold Mem(rs, vs)
+		f( /*@ seen, @*/ /*@ unfolding Mem(rs, vs) in @*/ r.Value) /*@ as VisitSpec{vis} @*/
+		//@ seen = seen ++ seq[any]{vs[0]}
+		//@ invariant Mem(rs, vs)
+		//@ invariant IsInit(rs, vs)
+		//@ invariant 1 <= c && c <= m
+		//@ invariant p == rs[c < m ? c : 0]
+		//@ invariant len(seen) == c && vis.Seen(seen)
+		//@ invariant forall t int :: {seen[t]} 0 <= t && t < c ==> seen[t] === vs[t]
+		//@ decreases m - c
+		for p := r.Next( /*@ rs, vs, 0 @*/ ); p != r; p = /*@ unfolding Mem(rs, vs) in @*/ p.next {
+			//@ assert c < m
+			//@ unfold Mem(rs, vs)
+			//@ assert p.Value === vs[c]
+			//@ assert c < m-1 ==> rs[c].next == rs[c+1]
+			//@ assert c == m-1 ==> rs[c].next == rs[0]
+			//@ fold Mem(rs, vs)
+			//@ assert (unfolding Mem(rs, vs) in p.next) == rs[c+1 < m ? c+1 : 0]
+			f( /*@ seen, @*/ /*@ unfolding Mem(rs, vs) in @*/ p.Value) /*@ as VisitSpec{vis} @*/
+			//@ seen = seen ++ seq[any]{vs[c]}
+			//@ c = c + 1
 		}
+		//@ unfold Mem(rs, vs)
+		//@ LemmaDistinct(rs)
+		//@ idxEq(rs, c < m ? c : 0, 0)
+		//@ assert rs[c < m ? c : 0] == rs[0]
+		//@ fold Mem(rs, vs)
+		//@ assert c == m
+		//@ assert seen == vs
 	}
+
 }

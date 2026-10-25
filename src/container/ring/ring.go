@@ -215,46 +215,116 @@ func New(n int) ( /*@ ghost rs seq[*Ring], ghost vs seq[any], @*/ ret *Ring) {
 // after r. The result points to the element following the
 // last element of s after insertion.
 //
-// The ghost arguments carry the decomposition the result is phrased in: ts is
-// rs without its first element r, and ss is the ring s belongs to. Requiring
-// Mem(ss, ws) is what restricts this contract to the different-ring case --
-// no client can produce a second Mem for elements it already owns through
-// Mem(rs, vs) -- so the same-ring case of the doc comment above is excluded
-// here rather than proved. See gobra-status.md.
-// @ requires  Mem(rs, vs) && 0 < len(rs) && rs[0] == r
+// The three cases of the doc comment are told apart by the ghost arguments,
+// which also carry the decomposition of r's ring that the results are phrased
+// in: ts is rs without its first element r. When s is on a different ring, ss
+// is that ring. When s is on r's own ring, ss is empty and ts splits as
+// us ++ ks: the elements Link unlinks, then the ones r keeps, which start at s.
 // @ requires  rs == seq[*Ring]{r} ++ ts && vs == seq[any]{v0} ++ tvs
-// @ requires  s != nil ==> Mem(ss, ws) && 0 < len(ss) && ss[0] == s
+// @ requires  Mem(rs, vs)
+// @ requires  s == nil ==> len(ss) == 0
+// @ requires  s != nil && len(ss) > 0 ==> Mem(ss, ws) && ss[0] == s
+// @ requires  s != nil && len(ss) == 0 ==> ts == us ++ ks && tvs == uvs ++ kvs && len(us) == len(uvs)
+// @ requires  s != nil && len(ss) == 0 && len(ks) > 0 ==> s == ks[0]
+// @ requires  s != nil && len(ss) == 0 && len(ks) == 0 ==> s == r
 // @ ensures   ret == (len(ts) > 0 ? ts[0] : r) && ret != nil
 // @ ensures   s == nil ==> Mem(rs, vs) && IsInit(rs, vs)
-// @ ensures   s != nil ==> Mem(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
-// @ ensures   s != nil ==> IsInit(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+// @ ensures   s != nil && len(ss) > 0 ==> Mem(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+// @ ensures   s != nil && len(ss) > 0 ==> IsInit(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+// @ ensures   s != nil && len(ss) == 0 ==> Mem(seq[*Ring]{r} ++ ks, seq[any]{v0} ++ kvs)
+// @ ensures   s != nil && len(ss) == 0 ==> IsInit(seq[*Ring]{r} ++ ks, seq[any]{v0} ++ kvs)
+// @ ensures   s != nil && len(ss) == 0 && len(us) > 0 ==> Mem(us, uvs) && IsInit(us, uvs)
 // @ decreases
-func (r *Ring) Link(s *Ring /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost v0 any, ghost ts seq[*Ring], ghost tvs seq[any], ghost ss seq[*Ring], ghost ws seq[any] @*/) (ret *Ring) {
+func (r *Ring) Link(s *Ring /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost v0 any, ghost ts seq[*Ring], ghost tvs seq[any], ghost ss seq[*Ring], ghost ws seq[any], ghost us seq[*Ring], ghost uvs seq[any], ghost ks seq[*Ring], ghost kvs seq[any] @*/) (ret *Ring) {
+	//@ ghost k := len(ss)
 	n := r.Next( /*@ rs, vs, 0 @*/ )
 	if s != nil {
-		p := s.Prev( /*@ ss, ws, 0 @*/ )
-		//@ ghost ars := seq[*Ring]{r} ++ ss ++ ts
-		//@ ghost avs := seq[any]{v0} ++ ws ++ tvs
-		//@ memDisjoint(rs, vs, ss, ws)
-		//@ spliceRead(ars, rs, r, ss, ts)
-		//@ spliceReadV(avs, vs, v0, ws, tvs)
-		//@ unfold Mem(rs, vs)
-		//@ unfold Mem(ss, ws)
-		//@ spliceSets(rs, ss, ars, r, ts)
-		// Framing each ring's linkage across the four writes needs to know
-		// which entries the writes did not touch.
-		//@ LemmaDistinct(rs)
-		//@ LemmaDistinct(ss)
+		//@ ghost if k == 0 {
+		//@ 	assert rs == seq[*Ring]{r} ++ us ++ ks
+		//@ 	cutRead(rs, r, us, ks)
+		//@ }
+		p := s.Prev( /*@ k > 0 ? ss : rs, k > 0 ? ws : vs, k > 0 ? 0 : (len(ks) > 0 ? 1+len(us) : 0) @*/ )
+		// The surgery is verified as an outline, against its own contract:
+		// inside, the context is that contract alone, not everything Next and
+		// Prev left behind on the way here. The contract names the four
+		// handles by position.
+		//@ requires rs == seq[*Ring]{r} ++ ts && vs == seq[any]{v0} ++ tvs
+		//@ requires Mem(rs, vs) && IsInit(rs, vs)
+		//@ requires k == len(ss) && s != nil
+		//@ requires len(rs) > 1 ==> n == rs[1]
+		//@ requires len(rs) == 1 ==> n == r
+		//@ requires k > 0 ==> Mem(ss, ws) && ss[0] == s && p == ss[len(ss)-1]
+		//@ requires k == 0 ==> ts == us ++ ks && tvs == uvs ++ kvs && len(us) == len(uvs) && p == rs[len(us)]
+		//@ requires k == 0 && len(ks) > 0 ==> s == ks[0]
+		//@ requires k == 0 && len(ks) == 0 ==> s == r
+		//@ ensures  k > 0 ==> Mem(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+		//@ ensures  k > 0 ==> IsInit(seq[*Ring]{r} ++ ss ++ ts, seq[any]{v0} ++ ws ++ tvs)
+		//@ ensures  k == 0 ==> Mem(seq[*Ring]{r} ++ ks, seq[any]{v0} ++ kvs)
+		//@ ensures  k == 0 ==> IsInit(seq[*Ring]{r} ++ ks, seq[any]{v0} ++ kvs)
+		//@ ensures  k == 0 && len(us) > 0 ==> Mem(us, uvs) && IsInit(us, uvs)
+		//@ decreases
+		//@ outline (
+		//@ ghost mrs := seq[*Ring]{r} ++ ss ++ ts
+		//@ ghost mvs := seq[any]{v0} ++ ws ++ tvs
+		//@ ghost crs := seq[*Ring]{r} ++ ks
+		//@ ghost cvs := seq[any]{v0} ++ kvs
+		//@ ghost if k > 0 {
+		//@ 	memDisjoint(rs, vs, ss, ws)
+		//@ 	spliceRead(mrs, rs, r, ss, ts)
+		//@ 	spliceReadV(mvs, vs, v0, ws, tvs)
+		//@ 	unfold Mem(rs, vs)
+		//@ 	unfold Mem(ss, ws)
+		//@ 	spliceSets(rs, ss, mrs, r, ts)
+		//@ 	LemmaDistinct(rs)
+		//@ 	LemmaDistinct(ss)
+		//@ } else {
+		//@ 	assert rs == seq[*Ring]{r} ++ us ++ ks
+		//@ 	assert vs == seq[any]{v0} ++ uvs ++ kvs
+		//@ 	cutRead(rs, r, us, ks)
+		//@ 	cutRead(crs, r, seq[*Ring]{}, ks)
+		//@ 	cutReadV(vs, v0, uvs, kvs)
+		//@ 	cutReadV(cvs, v0, seq[any]{}, kvs)
+		//@ 	ghost if len(us) == 0 && len(ks) == 0 {
+		//@ 		unfold Mem(rs, vs)
+		//@ 		cutSets(rs, r, us, ks)
+		//@ 	} else if len(us) == 0 {
+		//@ 		unfold Mem(rs, vs)
+		//@ 		cutSets(rs, r, us, ks)
+		//@ 		LemmaDistinct(rs)
+		//@ 		idxEq(rs, 0, 1)
+		//@ 	} else if len(ks) == 0 {
+		//@ 		unfold Mem(rs, vs)
+		//@ 		cutSets(rs, r, us, ks)
+		//@ 		LemmaDistinct(rs)
+		//@ 		idxEq(rs, 0, 1)
+		//@ 		idxEq(rs, 0, len(us))
+		//@ 	} else {
+		//@ 		unfold Mem(rs, vs)
+		//@ 		cutSets(rs, r, us, ks)
+		//@ 		LemmaDistinct(rs)
+		//@ 		idxEq(rs, 0, 1)
+		//@ 		idxEq(rs, 0, len(us))
+		//@ 		idxEq(rs, 0, 1+len(us))
+		//@ 		idxEq(rs, 1, 1+len(us))
+		//@ 		idxEq(rs, len(us), 1+len(us))
+		//@ 	}
+		//@ }
 		// Note: Cannot use multiple assignment because
 		// evaluation order of LHS is not specified.
 		r.next = s
 		s.prev = r
 		n.prev = p
 		p.next = n
-		// The merged ring is one footprint, not two, so it folds straight back.
-		//@ assert forall t, u int :: {rs[t], ss[u]} 0 <= t && t < len(rs) && 0 <= u && u < len(ss) ==> rs[t] != ss[u]
-		//@ assert ars[0].next != nil
-		//@ fold Mem(ars, avs)
+		//@ ghost if k > 0 {
+		//@ 	assert mrs[0].next != nil
+		//@ 	fold Mem(mrs, mvs)
+		//@ } else {
+		//@ 	fold Mem(crs, cvs)
+		//@ 	ghost if len(us) > 0 {
+		//@ 		fold Mem(us, uvs)
+		//@ 	}
+		//@ }
+		//@ )
 	}
 	return n
 }

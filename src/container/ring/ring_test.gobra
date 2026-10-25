@@ -397,11 +397,11 @@ func TestLink2() {
 	fold Mem(bs, bvs)
 
 	// r1a.Link(r0); verify(t, r1a, 1, 42)
-	r1a.Link(nil, xs, xvs, xvs[0], seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
+	r1a.Link(nil, xs, xvs, xvs[0], seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
 	verify(r1a, 1, 42, xs, xvs)
 
 	// r1a.Link(r1b); verify(t, r1a, 2, 42+77)
-	r1a.Link(r1b, xs, xvs, xvs[0], seq[*Ring]{}, seq[any]{}, bs, bvs)
+	r1a.Link(r1b, xs, xvs, xvs[0], seq[*Ring]{}, seq[any]{}, bs, bvs, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
 	ghost cs := seq[*Ring]{r1a} ++ bs ++ seq[*Ring]{}
 	ghost cvs := seq[any]{xvs[0]} ++ bvs ++ seq[any]{}
 	sumOfConcat(seq[any]{xvs[0]}, bvs)
@@ -416,13 +416,13 @@ func TestLink2() {
 	assert qs == seq[*Ring]{r10} ++ ts && qvs == seq[any]{qvs[0]} ++ tvs
 	assert forall k int :: {qvs[k]} 0 <= k && k < len(qvs) ==> intOrNil(qvs[k])
 	sumIsSumN(qvs, 10)
-	r10.Link(nil, qs, qvs, qvs[0], ts, tvs, seq[*Ring]{}, seq[any]{})
+	r10.Link(nil, qs, qvs, qvs[0], ts, tvs, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
 	verify(r10, 10, sumN(10), qs, qvs)
 
 	// r10.Link(r1a); verify(t, r10, 12, sumN(10)+42+77)
 	assert forall k int :: {tvs[k]} 0 <= k && k < len(tvs) ==> intOrNil(tvs[k])
 	sumOfConcat(seq[any]{qvs[0]}, tvs)
-	r10.Link(r1a, qs, qvs, qvs[0], ts, tvs, cs, cvs)
+	r10.Link(r1a, qs, qvs, qvs[0], ts, tvs, cs, cvs, seq[*Ring]{}, seq[any]{}, seq[*Ring]{}, seq[any]{})
 	ghost ds := seq[*Ring]{r10} ++ cs ++ ts
 	ghost dvs := seq[any]{qvs[0]} ++ cvs ++ tvs
 	sumOfConcat(seq[any]{qvs[0]}, cvs)

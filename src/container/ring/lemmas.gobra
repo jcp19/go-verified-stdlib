@@ -398,3 +398,54 @@ ensures   forall t int :: {avs[t]} 0 <= t && t < len(avs) ==>
 decreases
 func spliceReadV(avs seq[any], vs seq[any], v any, ws seq[any], tvs seq[any]) {
 }
+
+// ---------------------------------------------------------------------------
+// Cutting one ring into two.
+//
+// Link's same-ring case keeps r and everything from s on, and unlinks the
+// elements in between into a ring of their own. With ownership keyed by the
+// element set, the cut is set algebra: the three parts of rs -- r, the
+// unlinked us and the kept ks -- are full and pairwise disjoint, so each of
+// the two rings left behind is full too, and each takes its permissions from
+// rs's footprint by membership alone.
+// ---------------------------------------------------------------------------
+
+// cutRead: where the parts of rs = r ++ us ++ ks sit in rs.
+ghost
+requires  rs == seq[*Ring]{x} ++ us ++ ks
+ensures   len(rs) == 1 + len(us) + len(ks)
+ensures   rs[0] == x
+ensures   forall t int :: {us[t]} 0 <= t && t < len(us) ==> us[t] == rs[t+1]
+ensures   forall t int :: {ks[t]} 0 <= t && t < len(ks) ==> ks[t] == rs[t+1+len(us)]
+decreases
+func cutRead(rs seq[*Ring], x *Ring, us seq[*Ring], ks seq[*Ring]) {}
+
+// cutReadV is cutRead on the values.
+ghost
+requires  vs == seq[any]{v} ++ uvs ++ kvs
+ensures   len(vs) == 1 + len(uvs) + len(kvs) && vs[0] === v
+ensures   forall t int :: {uvs[t]} 0 <= t && t < len(uvs) ==> uvs[t] === vs[t+1]
+ensures   forall t int :: {kvs[t]} 0 <= t && t < len(kvs) ==> kvs[t] === vs[t+1+len(uvs)]
+decreases
+func cutReadV(vs seq[any], v any, uvs seq[any], kvs seq[any]) {}
+
+// cutSets: the set bookkeeping of the cut.
+ghost
+requires  rs == seq[*Ring]{x} ++ us ++ ks
+requires  len(ElemSet(rs)) == len(rs)
+ensures   len(ElemSet(seq[*Ring]{x} ++ ks)) == 1 + len(ks)
+ensures   len(ElemSet(us)) == len(us)
+ensures   ElemSet(rs) == ElemSet(seq[*Ring]{x} ++ ks) union ElemSet(us)
+ensures   ElemSet(seq[*Ring]{x} ++ ks) intersection ElemSet(us) == set[*Ring]{}
+decreases
+func cutSets(rs seq[*Ring], x *Ring, us seq[*Ring], ks seq[*Ring]) {
+	ghost xs := seq[*Ring]{x}
+	assert rs == (xs ++ us) ++ ks
+	cardSplit(xs ++ us, ks)
+	cardSplit(xs, us)
+	LemmaElemSetConcat(xs ++ us, ks)
+	LemmaElemSetConcat(xs, us)
+	LemmaElemSetConcat(xs, ks)
+	assert x elem ElemSet(xs)
+	cardJoin(xs, ks)
+}

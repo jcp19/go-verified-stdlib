@@ -178,6 +178,153 @@ func stepIsWrap(i int, n int, m int) {
 }
 
 // ---------------------------------------------------------------------------
+// The element set.
+//
+// Mem keys ownership by ElemSet(rs). The lemmas below are the set algebra that
+// encoding needs, adapted from container/list's. They are pure -- no heap, no
+// permissions -- so each verifies in its own small context, and the work that
+// a position-keyed footprint redoes inside every fold happens once here.
+// ---------------------------------------------------------------------------
+
+// LemmaElemSetConcat distributes ElemSet over sequence concatenation.
+ghost
+ensures   ElemSet(a ++ b) == ElemSet(a) union ElemSet(b)
+decreases len(a)
+func LemmaElemSetConcat(a, b seq[*Ring]) {
+	if len(a) == 0 {
+		assert a ++ b == b
+		assert reveal ElemSet(a) == set[*Ring]{}
+	} else {
+		LemmaElemSetConcat(a[1:], b)
+		assert (a ++ b)[1:] == a[1:] ++ b
+		assert (a ++ b)[0] == a[0]
+		assert reveal ElemSet(a ++ b) == set[*Ring]{a[0]} union ElemSet(a[1:] ++ b)
+		assert reveal ElemSet(a) == set[*Ring]{a[0]} union ElemSet(a[1:])
+	}
+}
+
+// LemmaElemSetSingle: the element set of a one-element sequence. ElemSet is
+// opaque, so folding Mem for a single element needs this.
+ghost
+ensures   ElemSet(seq[*Ring]{x}) == set[*Ring]{x}
+decreases
+func LemmaElemSetSingle(x *Ring) {
+	assert seq[*Ring]{x}[1:] == seq[*Ring]{}
+	assert reveal ElemSet(seq[*Ring]{x}) == set[*Ring]{x} union ElemSet(seq[*Ring]{x}[1:])
+}
+
+// LemmaElemSetCard: a sequence has at least as many entries as its element set.
+ghost
+ensures   len(ElemSet(rs)) <= len(rs)
+decreases len(rs)
+func LemmaElemSetCard(rs seq[*Ring]) {
+	if len(rs) == 0 {
+		assert reveal ElemSet(rs) == set[*Ring]{}
+	} else {
+		LemmaElemSetCard(rs[1:])
+		assert reveal ElemSet(rs) == set[*Ring]{rs[0]} union ElemSet(rs[1:])
+	}
+}
+
+// LemmaDistinct unpacks Mem's cardinality invariant into the pairwise form, at
+// the few sites that need it.
+ghost
+requires  len(ElemSet(rs)) == len(rs)
+ensures   forall a, b int :: {rs[a], rs[b]} 0 <= a && a < b && b < len(rs) ==> rs[a] != rs[b]
+decreases len(rs)
+func LemmaDistinct(rs seq[*Ring]) {
+	if len(rs) > 0 {
+		assert reveal ElemSet(rs) == set[*Ring]{rs[0]} union ElemSet(rs[1:])
+		LemmaElemSetCard(rs[1:])
+		// rs[0] cannot recur in the tail: the union would absorb it and the
+		// cardinality would fall short of len(rs).
+		if rs[0] elem ElemSet(rs[1:]) {
+			assert ElemSet(rs) == ElemSet(rs[1:])
+			assert false
+		}
+		LemmaDistinct(rs[1:])
+		assert forall a int :: {rs[1:][a]} 0 <= a && a < len(rs[1:]) ==> rs[1:][a] == rs[a+1]
+	}
+}
+
+// LemmaNotElem: a pointer that differs from every entry of rs is not in its set.
+ghost
+requires  forall a int :: {rs[a]} 0 <= a && a < len(rs) ==> rs[a] != e
+ensures   !(e elem ElemSet(rs))
+decreases len(rs)
+func LemmaNotElem(rs seq[*Ring], e *Ring) {
+	if len(rs) == 0 {
+		assert reveal ElemSet(rs) == set[*Ring]{}
+	} else {
+		assert forall a int :: {rs[1:][a]} 0 <= a && a < len(rs[1:]) ==> rs[1:][a] == rs[a+1]
+		LemmaNotElem(rs[1:], e)
+		assert reveal ElemSet(rs) == set[*Ring]{rs[0]} union ElemSet(rs[1:])
+	}
+}
+
+// LemmaDistinctCard is LemmaDistinct backwards: a sequence without repeats has
+// as many elements as entries. New needs it to fold the ring it has built.
+ghost
+requires  forall a, b int :: {rs[a], rs[b]} 0 <= a && a < b && b < len(rs) ==> rs[a] != rs[b]
+ensures   len(ElemSet(rs)) == len(rs)
+decreases len(rs)
+func LemmaDistinctCard(rs seq[*Ring]) {
+	if len(rs) > 0 {
+		assert forall a int :: {rs[1:][a]} 0 <= a && a < len(rs[1:]) ==> rs[1:][a] == rs[a+1]
+		LemmaNotElem(rs[1:], rs[0])
+		LemmaDistinctCard(rs[1:])
+		assert reveal ElemSet(rs) == set[*Ring]{rs[0]} union ElemSet(rs[1:])
+	}
+}
+
+// LemmaElemSetOnly: every element of ElemSet(rs) is some rs[i]. New needs it to
+// hand a footprint keyed by position over to Mem, which keys it by the set.
+ghost
+ensures   forall q *Ring :: {q elem ElemSet(rs)} q elem ElemSet(rs) ==>
+	exists i int :: {rs[i]} 0 <= i && i < len(rs) && rs[i] == q
+decreases len(rs)
+func LemmaElemSetOnly(rs seq[*Ring]) {
+	if len(rs) == 0 {
+		assert reveal ElemSet(rs) == set[*Ring]{}
+	} else {
+		LemmaElemSetOnly(rs[1:])
+		assert reveal ElemSet(rs) == set[*Ring]{rs[0]} union ElemSet(rs[1:])
+		assert forall a int :: {rs[1:][a]} 0 <= a && a < len(rs[1:]) ==> rs[1:][a] == rs[a+1]
+	}
+}
+
+// idxEq: in a sequence without repeats, two entries are equal exactly when
+// their positions are.
+ghost
+requires  forall a, b int :: {rs[a], rs[b]} 0 <= a && a < b && b < len(rs) ==> rs[a] != rs[b]
+requires  0 <= i && i < len(rs) && 0 <= j && j < len(rs)
+ensures   (rs[i] == rs[j]) == (i == j)
+decreases
+func idxEq(rs seq[*Ring], i int, j int) {}
+
+// cardSplit and cardJoin: a full element set splits into two full, disjoint
+// halves, and two such halves join back into a full one.
+ghost
+requires  len(ElemSet(a ++ b)) == len(a) + len(b)
+ensures   len(ElemSet(a)) == len(a) && len(ElemSet(b)) == len(b)
+ensures   ElemSet(a) intersection ElemSet(b) == set[*Ring]{}
+decreases
+func cardSplit(a, b seq[*Ring]) {
+	LemmaElemSetConcat(a, b)
+	LemmaElemSetCard(a)
+	LemmaElemSetCard(b)
+}
+
+ghost
+requires  len(ElemSet(a)) == len(a) && len(ElemSet(b)) == len(b)
+requires  ElemSet(a) intersection ElemSet(b) == set[*Ring]{}
+ensures   len(ElemSet(a ++ b)) == len(a) + len(b)
+decreases
+func cardJoin(a, b seq[*Ring]) {
+	LemmaElemSetConcat(a, b)
+}
+
+// ---------------------------------------------------------------------------
 // Splicing two rings into one.
 //
 // Link's different-ring case merges two footprints. The lemmas below are the
@@ -194,14 +341,40 @@ requires  Mem(rs, vs) && Mem(ss, ws)
 ensures   Mem(rs, vs) && Mem(ss, ws)
 ensures   forall t, u int :: {rs[t], ss[u]} 0 <= t && t < len(rs) && 0 <= u && u < len(ss) ==>
 	rs[t] != ss[u]
+ensures   ElemSet(rs) intersection ElemSet(ss) == set[*Ring]{}
 decreases
 func memDisjoint(rs seq[*Ring], vs seq[any], ss seq[*Ring], ws seq[any]) {
 	unfold Mem(rs, vs)
 	unfold Mem(ss, ws)
 	assert forall t, u int :: {rs[t], ss[u]} 0 <= t && t < len(rs) && 0 <= u && u < len(ss) ==>
 		rs[t] != ss[u]
+	// The same at the level of the sets: an element of both is some rs[t] and
+	// some ss[u] at once.
+	LemmaElemSetOnly(rs)
+	LemmaElemSetOnly(ss)
 	fold Mem(rs, vs)
 	fold Mem(ss, ws)
+}
+
+// spliceSets: the set bookkeeping of Link's different-ring case. The ring it
+// produces, r ++ ss ++ ts, is full because rs and ss are and do not overlap.
+ghost
+requires  rs == seq[*Ring]{x} ++ ts
+requires  ars == seq[*Ring]{x} ++ ss ++ ts
+requires  len(ElemSet(rs)) == len(rs) && len(ElemSet(ss)) == len(ss)
+requires  ElemSet(rs) intersection ElemSet(ss) == set[*Ring]{}
+ensures   len(ElemSet(ars)) == len(ars)
+ensures   ElemSet(ars) == ElemSet(rs) union ElemSet(ss)
+decreases
+func spliceSets(rs seq[*Ring], ss seq[*Ring], ars seq[*Ring], x *Ring, ts seq[*Ring]) {
+	ghost xs := seq[*Ring]{x}
+	cardSplit(xs, ts)
+	LemmaElemSetSingle(x)
+	LemmaElemSetConcat(xs, ts)
+	LemmaElemSetConcat(xs, ss)
+	LemmaElemSetConcat(xs ++ ss, ts)
+	cardJoin(xs, ss)
+	cardJoin(xs ++ ss, ts)
 }
 
 // spliceRead: the merged ring is r, then all of ss, then the rest of rs.

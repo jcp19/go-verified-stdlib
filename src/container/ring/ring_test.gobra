@@ -176,6 +176,10 @@ func verifyConnections(r *Ring, ghost rs seq[*Ring], ghost vs seq[any]) {
 			fold Mem(rs, vs)
 			c = c + 1
 		}
+		unfold Mem(rs, vs)
+		LemmaDistinct(rs)
+		idxEq(rs, c < m ? c : 0, 0)
+		fold Mem(rs, vs)
 		assert c == m
 		assert p == unfolding Mem(rs, vs) in r.prev
 	}
@@ -243,6 +247,9 @@ func makeN(n int) (ghost rs seq[*Ring], ghost vs seq[any], ret *Ring) {
 	decreases n + 1 - i
 	for i := 1; i <= n; i++ {
 		unfold Mem(rs, vs)
+		// Distinctness is what frames every other element's value across the
+		// write to r.Value.
+		LemmaDistinct(rs)
 		r.Value = i
 		ghost var iv any = i
 		vs = vs[i-1 = iv]
@@ -301,6 +308,7 @@ func TestMoveEmptyRing() {
 	r@ := Ring{}
 	ghost rs := seq[*Ring]{&r}
 	ghost vs := seq[any]{r.Value}
+	LemmaElemSetSingle(&r)
 	fold Mem(rs, vs)
 
 	res := (&r).Move(1, rs, vs, 0)
@@ -372,6 +380,7 @@ func TestLink2() {
 	assert xvs[:0] == seq[any]{} && sumOf(seq[any]{}) == 0
 	assert sumOf(xvs) == sumOf(xvs[:len(xvs)-1]) + valOf(xvs[len(xvs)-1])
 	assert sumOf(xvs) == 42
+	LemmaElemSetSingle(r1a)
 	fold Mem(xs, xvs)
 
 	x77 := 77
@@ -384,6 +393,7 @@ func TestLink2() {
 	assert bvs[:0] == seq[any]{} && sumOf(seq[any]{}) == 0
 	assert sumOf(bvs) == sumOf(bvs[:len(bvs)-1]) + valOf(bvs[len(bvs)-1])
 	assert sumOf(bvs) == 77
+	LemmaElemSetSingle(r1b)
 	fold Mem(bs, bvs)
 
 	// r1a.Link(r0); verify(t, r1a, 1, 42)

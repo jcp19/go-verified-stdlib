@@ -30,6 +30,27 @@
 
 package ring
 
+// ElemSet is the set of elements of rs. Mem keys ownership by this set rather
+// than by position, as container/list does: a footprint keyed by position has
+// to be re-derived whenever the sequence is cut or spliced, while one keyed by
+// the set is split and merged by set algebra alone. That is what makes Link's
+// same-ring case -- which cuts one ring into two -- provable at all.
+//
+// The pointwise membership travels as a postcondition, so that Mem's body,
+// which cannot call a lemma, still gets permission for rs[i]. ElemSet is
+// opaque: it is recursive and appears in Mem's body, so leaving it transparent
+// would unroll it at every unfold. The lemmas reveal it where they induct on
+// it.
+ghost
+ensures   forall k int :: {rs[k]} 0 <= k && k < len(rs) ==> rs[k] elem res
+ensures   len(rs) == 0 ==> res == set[*Ring]{}
+decreases len(rs)
+opaque
+pure func ElemSet(rs seq[*Ring]) (res set[*Ring]) {
+	return len(rs) == 0 ? set[*Ring]{} :
+		(set[*Ring]{rs[0]} union ElemSet(rs[1:]))
+}
+
 // Mem(rs, vs) owns one ring: the elements rs, in forward order, storing the
 // values vs.
 //
@@ -42,17 +63,26 @@ package ring
 pred Mem(rs seq[*Ring], vs seq[any]) {
 	0 < len(rs) &&
 	len(rs) == len(vs) &&
-	// ownership of every element, and the value it stores
-	(forall i int :: {rs[i]} 0 <= i && i < len(rs) ==>
-		acc(rs[i]) && rs[i] != nil && rs[i].Value === vs[i]) &&
-	// The elements are pairwise distinct and consecutive ones are linked.
-	// Both facts are phrased in a single two-variable quantifier whose body
-	// introduces no new sequence-index terms; see VERIFICATION.md.
-	(forall i, k int :: {rs[i], rs[k]} 0 <= i && i < len(rs) && 0 <= k && k < len(rs) ==>
-		(rs[i] == rs[k] ==> i == k) &&
-		(k == i+1 ==> rs[i].next == rs[k] && rs[k].prev == rs[i])) &&
+	// The elements are distinct, stated as a cardinality: it has no quantifier
+	// at all, where the pairwise form is instantiated once per pair of rs[.]
+	// terms at every unfold. LemmaDistinct unpacks it where it is needed.
+	len(ElemSet(rs)) == len(rs) &&
+	(forall i int :: {rs[i]} 0 <= i && i < len(rs) ==> rs[i] elem ElemSet(rs)) &&
+	// Ownership, one quantified permission per field, each triggered on that
+	// field and keyed by the element set. Per field rather than acc(p): Ring
+	// has an interface-typed field, and a quantified acc(p) over such a struct
+	// is what defeated the cut in the first place (see gobra-status.md).
+	(forall p *Ring :: {p.next} p elem ElemSet(rs) ==> acc(&p.next)) &&
+	(forall p *Ring :: {p.prev} p elem ElemSet(rs) ==> acc(&p.prev)) &&
+	(forall p *Ring :: {p.Value} p elem ElemSet(rs) ==> acc(&p.Value)) &&
+	(forall i int :: {rs[i]} 0 <= i && i < len(rs) ==> rs[i] != nil && rs[i].Value === vs[i]) &&
+	// Consecutive elements are linked, one quantifier per direction, triggered
+	// on the field read: naming rs[i+1] does not create rs[i+1].next, so the
+	// body cannot re-trigger itself.
+	(forall i int :: {rs[i].next} 0 <= i && i < len(rs)-1 ==> rs[i].next == rs[i+1]) &&
+	(forall i int :: {rs[i].prev} 0 < i && i < len(rs) ==> rs[i].prev == rs[i-1]) &&
 	// A ring that has not been initialized yet is a single element linked to
-	// nothing; any other ring is closed. For len(rs) > 1 the quantifier above
+	// nothing; any other ring is closed. For len(rs) > 1 the linkage above
 	// already forces rs[0].next == rs[1] != nil, so only a one-element ring
 	// can take the first branch.
 	(rs[0].next == nil ==> len(rs) == 1 && rs[0].prev == nil) &&

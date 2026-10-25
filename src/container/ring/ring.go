@@ -192,6 +192,9 @@ func New(n int) ( /*@ ghost rs seq[*Ring], ghost vs seq[any], @*/ ret *Ring) {
 	//@ assert len(rs) > 1 ==> rs[0].next == rs[1] && rs[1] != nil
 	//@ assert len(rs) == 1 ==> rs[0] == p && rs[0].next == rs[0] && rs[0] != nil
 	//@ assert rs[0].next != nil
+	// Mem keys ownership by the element set; the loop kept it by position.
+	//@ LemmaDistinctCard(rs)
+	//@ LemmaElemSetOnly(rs)
 	//@ fold Mem(rs, vs)
 	return /*@ rs, vs, @*/ r
 }
@@ -237,6 +240,11 @@ func (r *Ring) Link(s *Ring /*@, ghost rs seq[*Ring], ghost vs seq[any], ghost v
 		//@ spliceReadV(avs, vs, v0, ws, tvs)
 		//@ unfold Mem(rs, vs)
 		//@ unfold Mem(ss, ws)
+		//@ spliceSets(rs, ss, ars, r, ts)
+		// Framing each ring's linkage across the four writes needs to know
+		// which entries the writes did not touch.
+		//@ LemmaDistinct(rs)
+		//@ LemmaDistinct(ss)
 		// Note: Cannot use multiple assignment because
 		// evaluation order of LHS is not specified.
 		r.next = s
@@ -299,7 +307,11 @@ func (r *Ring) Len( /*@ ghost rs seq[*Ring], ghost vs seq[any], ghost i int @*/ 
 			//@ fold Mem(rs, vs)
 			//@ assert (unfolding Mem(rs, vs) in p.next) == rs[q2]
 		}
+		// The walk is back at r. The elements are distinct, so the position it
+		// is at is r's own, which is what makes n the length.
 		//@ unfold Mem(rs, vs)
+		//@ LemmaDistinct(rs)
+		//@ idxEq(rs, i+n < m ? i+n : i+n-m, i)
 		//@ assert rs[i+n < m ? i+n : i+n-m] == rs[i]
 		//@ fold Mem(rs, vs)
 	}
@@ -353,6 +365,8 @@ func (r *Ring) Do(f func( /*@ ghost seq[any], @*/ any) /*@, ghost rs seq[*Ring],
 			//@ c = c + 1
 		}
 		//@ unfold Mem(rs, vs)
+		//@ LemmaDistinct(rs)
+		//@ idxEq(rs, c < m ? c : 0, 0)
 		//@ assert rs[c < m ? c : 0] == rs[0]
 		//@ fold Mem(rs, vs)
 		//@ assert c == m

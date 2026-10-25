@@ -352,7 +352,7 @@ func (r *Ring) Unlink(n int /*@, ghost rs seq[*Ring], ghost vs seq[any] @*/) (re
 	//@ ghost m := len(rs)
 	//@ ghost u := Wrap(n, m)
 	//@ wrapSucc(n, m)
-	s := r.Move(n+1 /*@, rs, vs, 0 @*/)
+	s := r.Move(n + 1 /*@, rs, vs, 0 @*/)
 	//@ assert u+1 < m ==> s == rs[1+u]
 	//@ assert u+1 == m ==> s == r
 	//@ assert rs == seq[*Ring]{r} ++ rs[1:]

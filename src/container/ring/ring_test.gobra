@@ -10,19 +10,12 @@
 // unreachable, so the tests hold for the specifications statically rather than
 // for one execution.
 //
-// Four of the original's tests are missing here, each for a reason that is a
-// property of the specification rather than of the test:
-//
-//   - TestCornerCases, TestUnlink and TestLinkUnlink call Unlink, which is not
-//     verified, and TestLink1 links a ring to itself, which Link's contract
-//     does not cover. See VERIFICATION.md and gobra-status.md.
-//   - TestLink3 calls verify on the *result* of Link, which is the element
-//     after the splice rather than the one Mem is rooted at, and the package
-//     ships no lemma to re-root Mem. That gap is the "Do is callable only from
-//     rs[0]" limitation recorded in gobra-status.md, met from the client side.
-//
-// dump is not translated either: it only exists for debugging and exercises
-// fmt, not the ring.
+// Every test of the original is here. Where it calls verify on a handle that
+// is not the first element of its ring -- s10 in TestUnlink, the result of
+// Link in TestLink1 and TestLink3 -- the ring is first re-rooted at that
+// handle with LemmaRotate, because verify calls Do, which reports the values
+// from the first element. dump is not translated: it only exists for
+// debugging and exercises fmt, not the ring.
 //
 // Deviations from the original, all semantics-preserving: results of impure
 // calls are stored in locals before they are compared, because Gobra does not

@@ -80,8 +80,11 @@ the solver still proves Go's division identity and the small-value facts for
 contradiction that is linear in product atoms such as `q1*m` while those
 atoms are in the query. The package now uses `%` only on non-negative
 dividends and proves periodicity by quotient uniqueness, passing the products
-to its last step as plain values; see `../container/ring/gobra-status.md`. It
-verifies in about 45 s.
+to its last step as plain values; see `../container/ring/gobra-status.md`.
+Its ownership is now set-keyed and per field, the shape that fixed
+`container/list` here, though for a different reason: it is what made
+`Link`'s same-ring cut provable. The package verifies in about 2 minutes in
+CI, nearly all of it `Link`.
 
 On the whole package the divergence is not merely slow. `move` and `remove`
 grow a single Z3 process past 7.5 GB until the kernel kills it, and Silicon

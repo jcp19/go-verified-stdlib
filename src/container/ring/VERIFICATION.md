@@ -1,15 +1,14 @@
 # Gobra verification of container/ring
 
-Eight of the nine members of this package are verified with
+All nine members of this package are verified with
 [Gobra](https://github.com/viperproject/gobra): memory safety, absence of
 panics, termination and functional correctness against their doc comments,
-with **no assumptions**. `Link` is among them, but its contract covers two of
-its three documented cases: `s == nil` and `s` on a different ring. The
-same-ring case — which is all `Unlink` does — is excluded by `Link`'s
-precondition, and `Unlink` is the package's one `trusted` member, stubbed with
-`requires false`. So no client can reach the unproved case and nothing else in
-the package rests on it. `gobra-status.md` is the per-member inventory and
-records, with measurements, exactly where the same-ring cut stops.
+with **no assumptions** and no `trusted` member. That includes all three
+documented cases of `Link` — `s == nil`, `s` on a different ring, and `s` on
+the same ring, which cuts the ring in two — and `Unlink`, which is that last
+case. Every test of the package's `ring_test.go` has a verified counterpart.
+`gobra-status.md` is the per-member inventory, with the measurements behind
+the design choices below.
 
 ## Abstraction
 
@@ -47,9 +46,11 @@ deliberate, and it is the shape of `ring`'s API that forces it:
   would need a lemma call at every step.
 - **Aliases into one ring are normal.** `TestUnlink` keeps `r10` and
   `s10 := r10.Move(6)` alive at the same time and calls `verify` on both. With
-  a parameterized predicate that costs nothing: `Mem(rs, vs)` is one resource
-  and the two handles differ only in their ghost index. With ghost fields each
-  switch between them is a re-rooting lemma.
+  a parameterized predicate, `Mem(rs, vs)` is one resource and the two handles
+  differ only in their ghost index for `Next`, `Prev`, `Move` and `Len`; only
+  the members that need the handle first (`Do`, `Link`, `Unlink`) need a
+  rotation. With ghost fields every switch between handles is a re-rooting
+  lemma.
 - **Repeated queries on one handle are the common case.** `verify` calls
   `r.Move` four times per loop iteration. Each is `preserves Mem(rs, vs)`,
   because `rs` and `vs` are pinned in the predicate's own arguments.
@@ -58,15 +59,22 @@ That last point is also why no read-only method here carries a "nothing
 changed" postcondition, and why none of them needs a read fraction: the
 abstraction cannot drift when it is a parameter.
 
-`Do` is the one member that asks for `rs[0] == r`. It reports the values in
-the order it visits them, so the sequence has to start where the walk does.
-That is also this design's sharpest limitation, and it belongs next to the
-claim above: the package ships no lemma to re-root `Mem(rs, vs)` at another
-element, so a client holding a handle that is not `rs[0]` cannot call `Do` at
-all. Re-rooting means rotating the sequence, which is a split of the
-quantified-permission footprint followed by a merge — the same surgery that
-defeated `Link`. See `gobra-status.md`, which records what that cost and, with
-measurements, which part of it is the real obstacle.
+`Do`, `Link` and `Unlink` ask for the handle to be the first element,
+`rs[0] == r`: `Do` reports the values in the order it visits them, and the
+results of `Link` and `Unlink` are phrased as cuts of the sequence starting at
+`r`. A client holding another element re-roots first with
+
+```gobra
+requires  0 <= i && i < len(rs)
+requires  Mem(rs, vs) && IsInit(rs, vs)
+ensures   Mem(rs[i:] ++ rs[:i], vs[i:] ++ vs[:i])
+ensures   IsInit(rs[i:] ++ rs[:i], vs[i:] ++ vs[:i])
+func LemmaRotate(rs seq[*Ring], vs seq[any], i int)
+```
+
+which is cheap because ownership is keyed by the element set (below), and a
+rotation leaves the set unchanged. The translated `TestUnlink` does exactly
+this to call `verify` on `s10`.
 
 ### The zero value
 
@@ -89,19 +97,31 @@ client-visible behaviour depends on it.
 
 ## Notable proof engineering
 
-- **Distinctness and linkage share one two-variable quantifier.** Its body
-  introduces no new sequence-index term, so Z3 cannot chain instantiations
-  around the ring:
+- **Ownership is keyed by the element set, one quantifier per field.**
 
   ```gobra
-  (forall i, k int :: {rs[i], rs[k]} 0 <= i && i < len(rs) && 0 <= k && k < len(rs) ==>
-      (rs[i] == rs[k] ==> i == k) &&
-      (k == i+1 ==> rs[i].next == rs[k] && rs[k].prev == rs[i]))
+  (forall p *Ring :: {p.next}  p elem ElemSet(rs) ==> acc(&p.next)) &&
+  (forall p *Ring :: {p.prev}  p elem ElemSet(rs) ==> acc(&p.prev)) &&
+  (forall p *Ring :: {p.Value} p elem ElemSet(rs) ==> acc(&p.Value))
   ```
 
-  Distinctness has to be stated, not just implied by the permissions: `Len` and
-  `Do` stop when the walk returns to `r`, and concluding "then I have taken
-  exactly `len(rs)` steps" is precisely the step that needs it.
+  rather than by position (`forall i :: acc(rs[i])`). A position-keyed
+  footprint can be merged, which is all the different-ring case of `Link`
+  needs, but splitting one — the same-ring case — did not terminate; keyed by
+  the set, the split is set algebra proved once in pure lemmas (`cutSets`,
+  `spliceSets`). Per field rather than `acc(p)`, because `Ring.Value` is `any`,
+  and whole-struct quantified ownership over a struct with an interface-typed
+  field is what defeated the cut in measurements (`gobra-status.md`).
+  `ElemSet` is opaque, so `Mem`'s body does not unroll it at every unfold.
+- **Distinctness is a cardinality**, `len(ElemSet(rs)) == len(rs)`, with no
+  quantifier at all; `LemmaDistinct` unpacks it into the pairwise form where a
+  proof needs it. It has to be stated, not just implied by the permissions:
+  `Len` and `Do` stop when the walk returns to `r`, and concluding "then I have
+  taken exactly `len(rs)` steps" is precisely the step that needs it.
+- **Linkage is one quantifier per direction, triggered on the field read**,
+  `{rs[i].next}` and `{rs[i].prev}`: naming the neighbour `rs[i+1]` in the body
+  does not create the term `rs[i+1].next`, so the quantifier cannot chain
+  instantiations around the ring.
 - **`Move` is proved with one description of the walk and specified with
   another.** The loop invariant uses `step`, which counts single steps exactly
   as the code does; the contract uses `Wrap(i+n, len(rs))`, which is the
@@ -117,7 +137,7 @@ client-visible behaviour depends on it.
   has the measurements.
 - **A neighbour is derived where it is needed, not stored.** `Next`, `Prev` and
   `Move` each name the neighbour they are about to read in an `assert` before
-  reading it, which brings the term into scope and lets the two-variable
+  reading it, which brings the term into scope and lets the linkage
   quantifier fire. Adding the neighbour relation to `Mem` instead would have
   made every fold in the package pay for it.
 - **`Len` and `Do` keep `Mem` folded across their loops** and read `p.next`
@@ -137,14 +157,28 @@ client-visible behaviour depends on it.
   be rediscovered from the combined quantifier that used to follow made the
   check depend on the solver's search order, and cost about 25% of the
   package's runtime.
-- **`Link` splices two footprints without ever splitting one.** The
-  different-ring case is a merge: both rings are unfolded, the four pointers
-  are written, and the result folds straight back as one `Mem`. Three small
-  lemmas keep the proof context small enough to terminate — `memDisjoint`,
-  which reads the two rings' disjointness off the fact that both are held at
-  once (an element of both would carry `acc` twice), and `spliceRead` /
-  `spliceReadV`, which say what the merged sequences are in terms of the two
-  the permissions are indexed by. Inlining any of them makes `Link` diverge.
+- **`Link` takes the decomposition of the ring as ghost arguments** and tells
+  its three cases apart by them: `rs == {r} ++ ts`; when `s` is on another
+  ring `ss` is that ring, and when `s` is on `r`'s own ring `ss` is empty and
+  `ts == us ++ ks` — the elements `Link` unlinks, then the ones `r` keeps. The
+  different-ring case is a merge, the same-ring case a cut, and each folds its
+  result straight back as `Mem`. Small lemmas carry the bookkeeping:
+  `memDisjoint` reads two rings' disjointness off the fact that both are held
+  at once (an element of both would carry `acc` twice); `spliceRead` and
+  `cutRead` say what the merged or cut sequences are, by position;
+  `spliceSets` and `cutSets` do the set algebra.
+- **`Link`'s four pointer writes run inside an `outline` block.** An outline
+  is verified against its own contract in a clean context, so the surgery does
+  not see what `Next` and `Prev` left behind on the way there. Assembled
+  inline, the same proof took 1245 s and failed; with the outline it verifies,
+  in about 110 s of solver time, nearly all of it the same-ring case. Inside it, the same-ring branch is split
+  by the shape of the cut (`us` or `ks` empty or not), and each branch does its
+  own `unfold`: Silicon rejoins branches that only call pure lemmas, and a
+  rejoined branch loses the shape it was split on.
+- **`Unlink` is `Link` with `s` n+1 elements ahead.** Its contract counts in
+  `u = Wrap(n, len(rs))`, the `n % r.Len()` of its doc comment: `rs[1:1+u]` is
+  the removed subring and `r` keeps the rest. `wrapSucc` relates the position
+  `Move(n+1)` reaches to `u`.
 - **`Size` exports what `Mem` seals.** `0 < len(rs)` and `len(rs) == len(vs)`
   are invisible outside the predicate, which makes *any* contract mentioning
   `rs` and `vs` together ill-formed for a client. The getter is what keeps the
@@ -164,7 +198,8 @@ The implementation logic is unchanged. Stripping every annotation from
 `ring.go` and diffing against the upstream file leaves only permitted
 transformations: return parameters are named; three `return r.init()` become
 `res := r.init(); return res` so a `fold` can sit between the call and the
-return (likewise `res := r.next`); ghost parameters and results are added
+return (likewise `res := r.next`); `Unlink`'s `return r.Link(r.Move(n + 1))`
+stores `Move`'s result in a local `s` first; ghost parameters and results are added
 inside `/*@ … @*/`; and doc comments are extended. `f func(any)` becomes
 `f func( /*@ ghost seq[any], @*/ any)`, which Go still reads as `func(any)`.
 `go build`, `go vet` and `go test` pass on the transformed package, and
@@ -181,30 +216,37 @@ Two Gobra limitations forced a workaround rather than a code change:
 
 ## Tests (ring_test.gobra)
 
-`verify`, `makeN`, `sumN`, `TestNew`, `TestMoveEmptyRing` and `TestLink2` are
-reproduced as verified clients; every `t.Errorf` becomes an `assert` proved
+Every test of `ring_test.go` — `TestCornerCases`, `TestNew`, `TestLink1`,
+`TestLink2`, `TestLink3`, `TestUnlink`, `TestLinkUnlink` and
+`TestMoveEmptyRing` — is reproduced as a verified client, together with the
+helpers `verify`, `makeN` and `sumN`; every `t.Errorf` becomes an `assert` proved
 unreachable, so the tests hold for the specifications statically. `verify` is split into three
 functions, one per block of the original, and `TestNew`'s two loops are
 unrolled into one call per length — both to keep each proof small. Results of
 impure calls are stored in locals before being compared, because Gobra does not
 allow a call inside an assertion.
 
-`TestLink2` is the original's different-ring test in full, up to the
-twelve-element ring its last splice produces; it is also what shows `Link`'s
-contract is usable rather than vacuously true. Four tests are not translated:
-three call `Unlink`, `TestLink1` links a ring to itself, and `TestLink3` calls
-`verify` on the element `Link` returns rather than the one `Mem` is rooted at.
-See `gobra-status.md`.
+The tests are also what show the contracts are usable rather than vacuously
+true: `TestLink2` exercises the different-ring case of `Link` up to the
+twelve-element ring its last splice produces, `TestLink1` the same-ring case
+in both of its shapes, and `TestUnlink` and `TestLinkUnlink` `Unlink`, the
+latter linking every removed subring back and checking that the ring is
+restored element for element. Where the original calls `verify` on a handle
+that is not the first element of its ring (`s10` in `TestUnlink`, `Link`'s
+result in `TestLink1` and `TestLink3`), the ring is re-rooted with
+`LemmaRotate` first. Only `dump` is not translated: it is a debugging aid that
+exercises `fmt`, not the ring.
 
 One test is *added*, `testMoveIsNotDegenerate`. The original checks Move only
 by comparing `Move(n)` with `Move(n % Len())`, which a contract saying "Move
 returns the receiver" would satisfy just as well; the added test pins the
 returned element down on a three-element ring.
 
-Every member of the package and every test function was checked for vacuity by
-placing `assert false` in its body and confirming that Gobra reports an error.
-There is no `assume` anywhere in the package, and `Unlink` is the only
-`trusted` member.
+Every member with a body and every test function was checked for vacuity by
+placing `assert false` first in its body and confirming that Gobra reports an
+error; the one expected exception is `linContra`, whose precondition is false
+on purpose (it closes impossible branches of the `%` proofs). There is no
+`assume` and no `trusted` anywhere in the package.
 
 ## Running the verification
 
@@ -212,6 +254,8 @@ There is no `assume` anywhere in the package, and `Unlink` is the only
 java -jar gobra.jar --config <repo>/src/container/ring
 ```
 
-(Requires Z3 on `Z3_EXE`.) The package and its tests verify in about 45 s on
-4 cores with Z3 4.16.0, the version the CI image ships, with `assert_timeout`
-at 5 s. See `../../gobra/TOOLCHAIN.md` for why the Z3 version matters here.
+(Requires Z3 on `Z3_EXE`.) The package and its tests verify in about 6 minutes
+on 4 local cores with Z3 4.16.0, the version the CI image ships, with
+`assert_timeout` at 5 s; the CI runner takes about 2 minutes. Nearly all of it
+is `Link`'s same-ring case, and `gobra-status.md` records where in it the time
+goes. See `../../gobra/TOOLCHAIN.md` for why the Z3 version matters here.

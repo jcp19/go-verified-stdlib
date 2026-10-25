@@ -29,7 +29,7 @@ jobs:
       # the two packages after it are never even attempted, and a PR touching
       # only those gets no signal about its own work.
       #
-      # Runtimes, for judging the 1h timeout: sort ~10s, container/ring ~40s,
+      # Runtimes, for judging the 1h timeout: sort ~10s, container/ring ~2min,
       # container/list ~4min, internal/bytealg ~21min, nearly all of the last
       # in IndexRabinKarpBytes. See src/internal/bytealg/GOBRA.md.
       - name: Verify package sort
@@ -38,9 +38,8 @@ jobs:
           configFile: 'src/sort'
           timeout: 1h
 
-      # container/ring is verified except for Unlink, which carries
-      # "requires false", and the same-ring case of Link, which Link's
-      # precondition excludes; see src/container/ring/gobra-status.md.
+      # container/ring is fully verified, Link's same-ring case and Unlink
+      # included; see src/container/ring/gobra-status.md.
       - name: Verify package container/ring
         if: ${{ !cancelled() }}
         uses: viperproject/gobra-action@main

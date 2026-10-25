@@ -85,13 +85,20 @@ pure func Size(rs seq[*Ring], vs seq[any]) (res int) {
 }
 
 // Wrap normalizes the position k of a ring of m elements to [0, m). It is the
-// "% r.Len()" of the doc comments of Move and Unlink.
+// "% r.Len()" of the doc comments of Move and Unlink, taken as a position: the
+// Euclidean remainder, so that a negative k counts backwards from the end.
+//
+// It applies Go's % to non-negative dividends only, which is what the
+// periodicity lemmas in lemmas.gobra need. The previous form,
+// ((k % m) + m) % m, denotes the same function but applies % to negative
+// dividends, and on Z3 >= 4.14 the solver can no longer relate (k+m) % m to
+// k % m there (see the note above wrapShift).
 ghost
 requires  0 < m
 ensures   0 <= res && res < m
 decreases
 pure func Wrap(k int, m int) (res int) {
-	return ((k % m) + m) % m
+	return k >= 0 ? k % m : (m-1) - ((-k-1) % m)
 }
 
 // step is Wrap phrased as n single steps around a ring of m elements, which is

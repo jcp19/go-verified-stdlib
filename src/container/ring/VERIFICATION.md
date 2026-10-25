@@ -108,6 +108,13 @@ client-visible behaviour depends on it.
   `% r.Len()` of the doc comment. `stepIsWrap` bridges them by induction on
   `n`. Stating the invariant directly in `Wrap` would have put symbolic modular
   arithmetic in every iteration.
+- **`%` is only applied to non-negative dividends, and its periodicity is
+  proved rather than left to the solver.** Z3 4.14 and later cannot relate
+  `(k+m) % m` to `k % m` for a symbolic `m` on its own, so `wrapShift` goes
+  through uniqueness of the quotient-remainder decomposition, with each
+  non-linear step in a lemma of its own and the final contradiction stated
+  over the product terms as plain values (`linContra`). `gobra-status.md`
+  has the measurements.
 - **A neighbour is derived where it is needed, not stored.** `Next`, `Prev` and
   `Move` each name the neighbour they are about to read in an `assert` before
   reading it, which brings the term into scope and lets the two-variable
@@ -205,5 +212,6 @@ There is no `assume` anywhere in the package, and `Unlink` is the only
 java -jar gobra.jar --config <repo>/src/container/ring
 ```
 
-(Requires Z3 on `Z3_EXE`.) The package and its tests verify in about one minute
-on 4 cores, with `assert_timeout` at 5 s.
+(Requires Z3 on `Z3_EXE`.) The package and its tests verify in about 45 s on
+4 cores with Z3 4.16.0, the version the CI image ships, with `assert_timeout`
+at 5 s. See `../../gobra/TOOLCHAIN.md` for why the Z3 version matters here.

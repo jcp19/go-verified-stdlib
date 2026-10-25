@@ -30,17 +30,42 @@ verified: the same-ring cut" below.
 | `Mem` | spec.gobra | predicate |
 | `IsInit`, `Size`, `Wrap`, `step` | spec.gobra | verified |
 | `Visitor`, `VisitSpec` | spec.gobra | verified |
-| `wrapShift`, `stepIsWrap` | lemmas.gobra | verified |
+| `wrapShift`, `wrapNeg`, `stepIsWrap` | lemmas.gobra | verified |
+| `mulStep`, `mulSucc`, `linContra`, `divUnique`, `divIdentity`, `modUnique`, `modShift`, `modPred` | lemmas.gobra | verified |
 | `memDisjoint`, `spliceRead`, `spliceReadV` | lemmas.gobra | verified |
 
 `Mem`, `IsInit`, `Size`, `Wrap`, `Visitor` and `VisitSpec` are exported because
-they appear in exported contracts; `step`, `wrapShift` and `stepIsWrap` are
-package-internal scaffolding for `Move`'s proof, and `memDisjoint`,
+they appear in exported contracts; `step`, `stepIsWrap`, `wrapShift`,
+`wrapNeg` and the periodicity lemmas below them are package-internal
+scaffolding for `Move`'s proof and its test, and `memDisjoint`,
 `spliceRead` and `spliceReadV` for `Link`'s, and are not.
 
-`wrapShift` has an empty body: its postcondition `Wrap(k+m, m) == Wrap(k, m)`
-is discharged by Z3's axioms for `%` alone. That is a proof, not an
-assumption — the body is empty because nothing further is needed.
+`wrapShift` used to have an empty body, its postcondition
+`Wrap(k+m, m) == Wrap(k, m)` left to Z3's axioms for `%`. That stopped working
+on Z3 4.14 and later — the version the CI image ships, 4.16.0, reports it as
+failing — because the solver can no longer relate `(k+m) % m` to `k % m` for a
+symbolic `m`. It now has a real proof, via uniqueness of the quotient-remainder
+decomposition (`divUnique`), and the arithmetic is shaped by three things
+measured on Z3 4.16:
+
+- **Only non-negative dividends.** Z3 still proves the division identity and
+  the small-value facts for `%` on non-negative dividends, and proves neither
+  on negative ones. `Wrap` is therefore written
+  `k >= 0 ? k % m : (m-1) - ((-k-1) % m)`, the same function as the previous
+  `((k % m) + m) % m` but with `%` applied only where the solver can follow it.
+- **Non-linear steps are lemmas, not asserts.** Silicon's `assert` checks a fact
+  but does not assume it, so `mulStep` and `mulSucc` carry the two product
+  facts uniqueness needs, and their callers get them as postconditions.
+- **Products are kept out of the final contradiction.** Even with those facts in
+  hand, the contradiction in `divUnique` — linear in the atoms `q1*m` and
+  `q2*m` — is not found while those terms are in the query. `linContra` takes
+  them as plain parameters, so the solver sees only a linear problem.
+  `linContra`'s precondition is unsatisfiable by design: it is only ever called
+  on branches that cannot happen.
+
+Two hint assertions in `verifyMoves`, `-ni % N == -mi` and
+`Wrap(-ni, N) == Wrap(-mi, N)`, are replaced by a call to `wrapNeg`. The first
+used `%` on a negative dividend and had only passed by luck of its context.
 
 `VisitSpec` has no body at all. That is the closure-specification idiom, not an
 assumption: it is never called, it only states the contract that

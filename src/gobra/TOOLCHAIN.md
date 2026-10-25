@@ -71,6 +71,18 @@ luck, which leaves less margin against the job's 1h timeout.
 It was always the narrower of the two: it already failed on Z3 4.13.4, one patch
 release before `container/list` used to break.
 
+`container/ring` met the regression in a third place, modular arithmetic. Its
+`wrapShift` lemma had an empty body and relied on Z3 to show
+`(k+m) % m == k % m` for a symbolic `m`, which 4.16.0 no longer does, and one
+test hint used `%` on a negative dividend. Probed one fact at a time on 4.16.0,
+the solver still proves Go's division identity and the small-value facts for
+`%` on non-negative dividends, and neither on negative ones. It also fails a
+contradiction that is linear in product atoms such as `q1*m` while those
+atoms are in the query. The package now uses `%` only on non-negative
+dividends and proves periodicity by quotient uniqueness, passing the products
+to its last step as plain values; see `../container/ring/gobra-status.md`. It
+verifies in about 45 s.
+
 On the whole package the divergence is not merely slow. `move` and `remove`
 grow a single Z3 process past 7.5 GB until the kernel kills it, and Silicon
 reports

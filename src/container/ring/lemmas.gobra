@@ -9,6 +9,108 @@
 
 package ring
 
+// ---------------------------------------------------------------------------
+// Periodicity of %.
+//
+// wrapShift used to have an empty body, its postcondition left to Z3's axioms
+// for % alone. That stopped working on Z3 >= 4.14 (see
+// src/gobra/TOOLCHAIN.md): the solver can no longer show (k+m) % m == k % m
+// for a symbolic m, which needs the quotient to go up by exactly one. The
+// lemmas below supply that argument as uniqueness of the quotient-remainder
+// decomposition, and are shaped by two things measured on Z3 4.16:
+//
+//   - Silicon's assert checks a fact but does not assume it, so a non-linear
+//     step has to be a lemma, whose postcondition the caller does get.
+//   - Under smt.arith.solver 2 a contradiction that is linear in product terms
+//     such as q1*m still fails while those terms are in the query. linContra
+//     takes them as plain values instead, so the solver sees only a linear
+//     problem.
+//
+// Every dividend here is non-negative. Z3 handles Go's % on those (it is the
+// Euclidean remainder there) and not on negative ones, which is why Wrap is
+// written to avoid them.
+// ---------------------------------------------------------------------------
+
+// mulStep: a larger quotient is at least one whole divisor larger.
+ghost
+requires  0 < m && q1 < q2
+ensures   q1*m + m <= q2*m
+decreases
+func mulStep(q1 int, q2 int, m int) {}
+
+ghost
+ensures   (q+1)*m == q*m + m
+decreases
+func mulSucc(q int, m int) {}
+
+// linContra is the contradiction behind divUnique, with the products passed in
+// as the plain values a and b.
+ghost
+requires  0 <= r1 && r1 < m && 0 <= r2
+requires  a + r1 == b + r2 && a + m <= b
+ensures   false
+decreases
+func linContra(a int, b int, r1 int, r2 int, m int) {}
+
+// divUnique: by a positive divisor, a number has only one remainder in [0, m).
+ghost
+requires  0 < m && 0 <= r1 && r1 < m && 0 <= r2 && r2 < m
+requires  q1*m + r1 == q2*m + r2
+ensures   r1 == r2
+decreases
+func divUnique(q1 int, r1 int, q2 int, r2 int, m int) {
+	if q1 < q2 {
+		mulStep(q1, q2, m)
+		linContra(q1*m, q2*m, r1, r2, m)
+	} else if q2 < q1 {
+		mulStep(q2, q1, m)
+		linContra(q2*m, q1*m, r2, r1, m)
+	}
+}
+
+ghost
+requires  0 < m && 0 <= l
+ensures   l == (l/m)*m + l%m && 0 <= l%m && l%m < m
+decreases
+func divIdentity(l int, m int) {}
+
+// modUnique: any decomposition with a remainder in [0, m) names l % m.
+ghost
+requires  0 < m && 0 <= l && l == q*m + r && 0 <= r && r < m
+ensures   l % m == r
+decreases
+func modUnique(l int, q int, r int, m int) {
+	divIdentity(l, m)
+	divUnique(l/m, l%m, q, r, m)
+}
+
+// modShift: adding the divisor leaves the remainder alone.
+ghost
+requires  0 < m && 0 <= k
+ensures   (k+m) % m == k % m
+decreases
+func modShift(k int, m int) {
+	divIdentity(k, m)
+	mulSucc(k/m, m)
+	modUnique(k+m, k/m + 1, k%m, m)
+}
+
+// modPred: subtracting one steps the remainder back, wrapping from 0 to m-1.
+ghost
+requires  0 < m && 1 <= x
+ensures   x%m == 0 ==> (x-1) % m == m-1
+ensures   x%m != 0 ==> (x-1) % m == x%m - 1
+decreases
+func modPred(x int, m int) {
+	divIdentity(x, m)
+	if x%m == 0 {
+		mulSucc(x/m - 1, m)
+		modUnique(x-1, x/m - 1, m-1, m)
+	} else {
+		modUnique(x-1, x/m, x%m - 1, m)
+	}
+}
+
 // wrapShift states that a full turn around the ring is the identity on ring
 // positions.
 ghost
@@ -16,6 +118,34 @@ requires  0 < m
 ensures   Wrap(k+m, m) == Wrap(k, m)
 decreases
 func wrapShift(k int, m int) {
+	if k >= 0 {
+		modShift(k, m)
+	} else if k+m < 0 {
+		// both negative: Wrap reads (-k-1) % m on each side, one divisor apart
+		modShift(-k-m-1, m)
+	} else {
+		// k+m in [0, m): both sides are k+m without any reduction
+		assert (-k-1) % m == -k-1
+		assert (k+m) % m == k+m
+	}
+}
+
+// wrapNeg: stepping backwards x positions is stepping backwards by x % m.
+// It is what the "Move" block of the test file needs to compare Move(-ni) with
+// Move(-(ni % N)).
+ghost
+requires  0 < m && 0 <= x
+ensures   Wrap(-x, m) == Wrap(-(x % m), m)
+decreases
+func wrapNeg(x int, m int) {
+	if x > 0 {
+		modPred(x, m)
+		divIdentity(x, m)
+		ghost r := x % m
+		if r > 0 {
+			assert (r-1) % m == r-1
+		}
+	}
 }
 
 // stepIsWrap bridges the two descriptions of a walk around the ring: step,

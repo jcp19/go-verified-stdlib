@@ -209,8 +209,7 @@ func verifyMoves(r *Ring, N int, ghost rs seq[*Ring], ghost vs seq[any]) {
 		a := r.Move(ni, rs, vs, 0)
 		b := r.Move(mi, rs, vs, 0)
 		assert a == b
-		assert -ni % N == -mi
-		assert Wrap(-ni, N) == Wrap(-mi, N)
+		wrapNeg(ni, N)
 		c := r.Move(-ni, rs, vs, 0)
 		d := r.Move(-mi, rs, vs, 0)
 		assert c == d
